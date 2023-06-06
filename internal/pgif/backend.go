@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/highgrav/rhizome/internal/dbmgr"
 	"github.com/jackc/pgproto3/v2"
-	"highgrav/rhizome/internal/dbmgr"
 	"io"
 	"net"
 	"strings"
@@ -167,9 +167,32 @@ func (rz *RhizomeBackend) handleQuery(msg *pgproto3.Query) error {
 		)
 	}
 	defer rows.Close()
+	if err = rows.Err(); err != nil {
+		return err
+	}
 
 	// translate the Sqlite response to something PG clients can understand
+	// Convert col descriptions
+	cols, err := rows.ColumnTypes()
+	if err != nil {
+		return err
+	}
+	buf := convertColTypesToPgRowDescriptions(cols).Encode(nil)
 
+	// Convert rows
+	pgrows, err := convertRowsToPgRows(rows, cols)
+	if err != nil {
+		return err
+	}
+	for _, pgrow := range pgrows {
+		buf = pgrow.Encode(buf)
+	}
+
+	// Mark command complete and ready for next query.
+	buf = (&pgproto3.CommandComplete{CommandTag: []byte("SELECT 1")}).Encode(buf)
+	buf = (&pgproto3.ReadyForQuery{TxStatus: 'I'}).Encode(buf)
+
+	_, err = rz.conn.Write(buf)
 	return nil
 }
 

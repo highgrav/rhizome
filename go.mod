@@ -1,4 +1,4 @@
-module highgrav/rhizome
+module github.com/highgrav/rhizome
 
 go 1.20
 
