@@ -11,10 +11,23 @@ import (
 
 func TestCreateDBMgr(t *testing.T) {
 	fnCreate := func(id string) error {
-		fname := "/tmp/dbs/" + id + ".db"
+		fname := "/tmp/" + id + ".db"
 		connstr := "file:" + fname + "?cache=shared&mode=rwc"
-		_, err := sql.Open("sqlite3", connstr)
-		return err
+		fmt.Println("creating test db " + fname + " with connstr " + connstr)
+		db, err := sql.Open("sqlite3", connstr)
+		if err != nil {
+			fmt.Println("error creating new file: " + err.Error())
+			return err
+		}
+
+		// Need to ping the DB in order to serialize it to disk, evidently.
+		// (That is, omitting this results in the file not being created)
+		if db.Ping() != nil {
+			return db.Ping()
+		}
+
+		db.Close()
+		return nil
 	}
 
 	fnGet := func(id string) (string, error) {

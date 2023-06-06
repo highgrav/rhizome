@@ -141,7 +141,7 @@ func (rz *RhizomeBackend) close() error {
 func (rz *RhizomeBackend) handleQuery(msg *pgproto3.Query) error {
 	if rz.logMsgs {
 		// TODO -- convert to deck logging
-		fmt.Printf("handling query %q\n" + msg.String)
+		fmt.Printf("handling query %q\n", msg.String)
 	}
 	if strings.HasPrefix(strings.TrimSpace(msg.String), "[[") {
 		if rz.logMsgs {
