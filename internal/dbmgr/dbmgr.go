@@ -1,13 +1,18 @@
 package dbmgr
 
 import (
+	"database/sql"
+	"fmt"
 	"github.com/mattn/go-sqlite3"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
-type FnGetFilenameFromID func(id string) (string, error)
-type FnCreateNewDB func(id string, opts DBConnOptions) error
+const (
+	ProfileName = "rhizomestats"
+	StatOpenDbs = "open-dbs"
+)
 
 type DBManager struct {
 	sync.Mutex
@@ -19,19 +24,22 @@ type DBManager struct {
 	GetFilename FnGetFilenameFromID
 	CreateDb    FnCreateNewDB
 	DefaultOpts DBConnOptions
+	Stats       map[string]*atomic.Int64
 }
 
-func NewDBManager(cfg DBManagerConfig, fnGet FnGetFilenameFromID, fnNew FnCreateNewDB, defaultOpts DBConnOptions) *DBManager {
+func NewDBManager(cfg DBManagerConfig, defaultOpts DBConnOptions) *DBManager {
 	dbm := &DBManager{
 		Cfg:         cfg,
 		Driver:      &sqlite3.SQLiteDriver{},
 		DBs:         make(map[string]*DBConn),
 		ticker:      time.NewTicker(cfg.SweepEach),
 		done:        make(chan bool),
-		GetFilename: fnGet,
-		CreateDb:    fnNew,
+		GetFilename: cfg.FnGetDB,
+		CreateDb:    cfg.FnNewDB,
 		DefaultOpts: defaultOpts,
+		Stats:       make(map[string]*atomic.Int64),
 	}
+	dbm.Stats[StatOpenDbs] = &atomic.Int64{}
 
 	go func() {
 		for {
@@ -45,6 +53,38 @@ func NewDBManager(cfg DBManagerConfig, fnGet FnGetFilenameFromID, fnNew FnCreate
 		}
 	}()
 	return dbm
+}
+
+func (dbm *DBManager) UpdateStat(name string, val int64) {
+	_, ok := dbm.Stats[name]
+	if !ok {
+		dbm.Stats[name] = &atomic.Int64{}
+	}
+	dbm.Stats[name].Add(val)
+}
+
+/*
+AddConn() is used by open DBConns to deal with databases that have been unloaded, by allowing them to repopulate the DB
+map. This also handles a race condition where two attempts to populate a DB overlap, by returning a sql.DB if a valid one
+already exists. The DBConn is responsible for closing its own connection if this happens and instead using the one returned
+from this function.
+*/
+func (dbm *DBManager) AddConn(id string, conn *DBConn) *sql.DB {
+	dbm.Lock()
+	defer dbm.Unlock()
+	c, ok := dbm.DBs[id]
+	if !ok {
+		dbm.DBs[id] = conn
+		return nil
+	}
+	if c.DB != nil {
+		if c.DB.Ping() == nil {
+			// we have an active connection, so return it instead
+			return c.DB
+		}
+	}
+	dbm.DBs[id] = conn
+	return nil
 }
 
 func (dbm *DBManager) sweep() {
@@ -103,7 +143,7 @@ func (dbm *DBManager) Open(id string, opts DBConnOptions) error {
 		return nil
 	}
 
-	db, err := OpenDBConn(dbm.Driver, id, dbm.GetFilename, opts)
+	db, err := OpenDBConn(dbm, dbm.Driver, id, dbm.GetFilename, opts)
 	if err != nil {
 		return err
 	}
@@ -118,7 +158,7 @@ func (dbm *DBManager) OpenOrCreate(id string, opts DBConnOptions) error {
 		return nil
 	}
 
-	db, err := OpenOrCreateDBConn(dbm.Driver, id, dbm.GetFilename, dbm.CreateDb, opts)
+	db, err := OpenOrCreateDBConn(dbm, dbm.Driver, id, dbm.GetFilename, dbm.CreateDb, opts)
 	if err != nil {
 		return err
 	}
@@ -136,6 +176,9 @@ func (dbm *DBManager) Close() {
 }
 
 func (dbm *DBManager) CloseDB(id string) {
+	if dbm.Cfg.LogDbOpenClose {
+		fmt.Println("Closing db " + id)
+	}
 	conn, ok := dbm.DBs[id]
 	if !ok || conn == nil {
 		return

@@ -40,12 +40,15 @@ func main() {
 	cfg := dbmgr.DBManagerConfig{
 		BaseDir:        "/tmp/",
 		MaxDBsOpen:     500,
-		MaxIdleTime:    10 * time.Minute,
-		SweepEach:      30 * time.Second,
+		MaxIdleTime:    10 * time.Second,
+		SweepEach:      10 * time.Second,
 		CheckpointEach: 5 * time.Minute,
 		UseWAL:         false,
+		FnGetDB:        fnGet,
+		FnNewDB:        fnCreate,
+		LogDbOpenClose: true,
 	}
-	mgr := dbmgr.NewDBManager(cfg, fnGet, fnCreate, dbmgr.DBConnOptions{
+	mgr := dbmgr.NewDBManager(cfg, dbmgr.DBConnOptions{
 		UseJModeWAL:           true,
 		CacheShared:           false,
 		SecureDeleteFast:      true,
