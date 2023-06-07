@@ -53,6 +53,11 @@ func (rz *RhizomeBackend) start() error {
 		}
 		sqlconn, err := rz.dbmgr.Get(dbname)
 		if err != nil {
+			writePgMsgs(rz.conn,
+				&pgproto3.ErrorResponse{
+					Message: "unknown database " + dbname,
+				},
+			)
 			return err
 		}
 		rz.db = sqlconn

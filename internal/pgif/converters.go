@@ -1,26 +1,22 @@
 package pgif
 
 import (
-	"bytes"
 	"database/sql"
-	"encoding/binary"
 	"fmt"
 	"github.com/jackc/pgproto3/v2"
 	"github.com/jackc/pgtype"
-	"math"
-	"strconv"
 	"strings"
 )
 
 /*
 Helper function to convert Sqlite types. Note that we only support bigint, 64-bit floats, text, and bytea fields.
-NOTE: THIS IS PROVISIONAL! This assumes that Sqlite is returning the "storage class" (https://www.sqlite.org/datatype3.html)
-and not the "record format" (https://www.sqlite.org/fileformat2.html#record_format).
+// TODO -- support bool and datetime as derived data types?
 */
 func getPgTypeFromSqliteType(col *sql.ColumnType) uint32 {
-	if strings.ToLower(col.DatabaseTypeName()) == "integer" {
+	strn := strings.ToLower(col.DatabaseTypeName())
+	if strn == "boolean" || strn == "integer" || strn == "int" || strn == "tinyint" || strn == "smallint" || strn == "mediumint" || strn == "bigint" || strn == "unsigned big int" || strn == "int2" || strn == "int8" {
 		return pgtype.Int8OID
-	} else if strings.ToLower(col.DatabaseTypeName()) == "real" {
+	} else if strn == "float" || strn == "real" || strn == "double" || strn == "double precision" || strings.HasPrefix(strn, "decimal") {
 		return pgtype.Float8OID
 	} else if strings.ToLower(col.DatabaseTypeName()) == "blob" {
 		return pgtype.ByteaOID
@@ -45,30 +41,17 @@ func convertRowsToPgRows(rows *sql.Rows, cols []*sql.ColumnType) ([]*pgproto3.Da
 			Values: make([][]byte, len(vals)),
 		}
 		for i, _ := range vals {
+			if vals[i] == nil {
+				pgrow.Values[i] = nil
+				continue
+			}
 			pgtyp := getPgTypeFromSqliteType(cols[i])
 			if pgtyp == pgtype.Int8OID {
-				v := fmt.Sprint(vals[i])
-				// TODO -- this is going to bottleneck performance
-				vi, err := strconv.ParseInt(v, 10, 64)
-				if err != nil {
-					return datarows, err
-				}
-				buf := &bytes.Buffer{}
-				binary.Write(buf, binary.BigEndian, vi)
-				pgrow.Values[i] = buf.Bytes()
+				v := vals[i].(int64)
+				pgrow.Values[i] = []byte(fmt.Sprintf("%d", v))
 			} else if pgtyp == pgtype.Float8OID {
 				v := vals[i].(float64)
-				var buf []byte = make([]byte, 8)
-				n := math.Float64bits(v)
-				buf[0] = byte(n >> 56)
-				buf[1] = byte(n >> 48)
-				buf[2] = byte(n >> 40)
-				buf[3] = byte(n >> 32)
-				buf[4] = byte(n >> 24)
-				buf[5] = byte(n >> 16)
-				buf[6] = byte(n >> 8)
-				buf[7] = byte(n)
-				pgrow.Values[i] = buf
+				pgrow.Values[i] = []byte(fmt.Sprintf("%f", v))
 			} else if pgtyp == pgtype.ByteaOID {
 				pgrow.Values[i] = []byte(fmt.Sprint(vals[i]))
 			} else {
@@ -83,14 +66,21 @@ func convertRowsToPgRows(rows *sql.Rows, cols []*sql.ColumnType) ([]*pgproto3.Da
 func convertColTypesToPgRowDescriptions(cols []*sql.ColumnType) *pgproto3.RowDescription {
 	descs := &pgproto3.RowDescription{}
 	for _, col := range cols {
+		typ := getPgTypeFromSqliteType(col)
 		fd := pgproto3.FieldDescription{
 			Name:                 []byte(col.Name()),
 			TableOID:             0,
 			TableAttributeNumber: 0,
-			DataTypeOID:          getPgTypeFromSqliteType(col),
+			DataTypeOID:          typ,
 			DataTypeSize:         -1,
 			TypeModifier:         -1,
 			Format:               0,
+		}
+		if typ == pgtype.Int8OID || typ == pgtype.Float8OID {
+			fd.DataTypeSize = 8
+			fd.Format = 0
+		} else if typ == pgtype.ByteaOID {
+			fd.Format = 1
 		}
 
 		descs.Fields = append(descs.Fields, fd)

@@ -46,7 +46,7 @@ func main() {
 		UseWAL:         false,
 	}
 	mgr := dbmgr.NewDBManager(cfg, fnGet, fnCreate)
-	ln, err := net.Listen("tcp", ":9898")
+	ln, err := net.Listen("tcp", ":5432")
 	fmt.Println("listening...")
 	if err != nil {
 		panic(err)
