@@ -17,9 +17,9 @@ func main() {
 		return "/tmp/" + id + ".db", nil
 	}
 
-	fnCreate := func(id string) error {
+	fnCreate := func(id string, opts dbmgr.DBConnOptions) error {
 		fname := "/tmp/" + id + ".db"
-		connstr := "file:" + fname + "?cache=shared&mode=rwc"
+		connstr := "file:" + fname + opts.ConnstrOpts("rwc")
 		fmt.Println("creating test db " + fname + " with connstr " + connstr)
 		db, err := sql.Open("sqlite3", connstr)
 		if err != nil {
@@ -45,7 +45,14 @@ func main() {
 		CheckpointEach: 5 * time.Minute,
 		UseWAL:         false,
 	}
-	mgr := dbmgr.NewDBManager(cfg, fnGet, fnCreate)
+	mgr := dbmgr.NewDBManager(cfg, fnGet, fnCreate, dbmgr.DBConnOptions{
+		UseJModeWAL:           true,
+		CacheShared:           false,
+		SecureDeleteFast:      true,
+		AutoVacuumIncremental: true,
+		CaseSensitiveLike:     false,
+		ForeignKeys:           false,
+	})
 	ln, err := net.Listen("tcp", ":5432")
 	fmt.Println("listening...")
 	if err != nil {

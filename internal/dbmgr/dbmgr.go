@@ -7,7 +7,7 @@ import (
 )
 
 type FnGetFilenameFromID func(id string) (string, error)
-type FnCreateNewDB func(id string) error
+type FnCreateNewDB func(id string, opts DBConnOptions) error
 
 type DBManager struct {
 	sync.Mutex
@@ -18,9 +18,10 @@ type DBManager struct {
 	done        chan bool
 	GetFilename FnGetFilenameFromID
 	CreateDb    FnCreateNewDB
+	DefaultOpts DBConnOptions
 }
 
-func NewDBManager(cfg DBManagerConfig, fnGet FnGetFilenameFromID, fnNew FnCreateNewDB) *DBManager {
+func NewDBManager(cfg DBManagerConfig, fnGet FnGetFilenameFromID, fnNew FnCreateNewDB, defaultOpts DBConnOptions) *DBManager {
 	dbm := &DBManager{
 		Cfg:         cfg,
 		Driver:      &sqlite3.SQLiteDriver{},
@@ -29,6 +30,7 @@ func NewDBManager(cfg DBManagerConfig, fnGet FnGetFilenameFromID, fnNew FnCreate
 		done:        make(chan bool),
 		GetFilename: fnGet,
 		CreateDb:    fnNew,
+		DefaultOpts: defaultOpts,
 	}
 
 	go func() {
@@ -67,7 +69,7 @@ func (dbm *DBManager) Get(id string) (*DBConn, error) {
 	if ok {
 		return conn, nil
 	}
-	err := dbm.Open(id, DBConnOptions{})
+	err := dbm.Open(id, dbm.DefaultOpts)
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +85,7 @@ func (dbm *DBManager) GetOrCreate(id string) (*DBConn, error) {
 	if ok {
 		return conn, nil
 	}
-	err := dbm.OpenOrCreate(id, DBConnOptions{})
+	err := dbm.OpenOrCreate(id, dbm.DefaultOpts)
 	if err != nil {
 		return nil, err
 	}

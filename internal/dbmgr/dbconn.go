@@ -17,19 +17,17 @@ type DBConn struct {
 	driver       *sqlite3.SQLiteDriver
 }
 
-type DBConnOptions struct {
-}
-
 func OpenOrCreateDBConn(driver *sqlite3.SQLiteDriver, id string, fnGet FnGetFilenameFromID, fnCreate FnCreateNewDB, opts DBConnOptions) (*DBConn, error) {
 	filepath, err := fnGet(id)
 	if err != nil {
 		return nil, err
 	}
-	connstr := "file:" + filepath + "?cache=shared&mode=rw"
+	connstr := "file:" + filepath + opts.ConnstrOpts("rw")
+
 	db, err := sql.Open("sqlite3", connstr)
 	if err != nil || db.Ping() != nil {
 		// try to create the DB if necessary
-		err2 := fnCreate(id)
+		err2 := fnCreate(id, opts)
 		if err2 != nil {
 			return nil, err2
 		}
@@ -68,7 +66,7 @@ func OpenDBConn(driver *sqlite3.SQLiteDriver, id string, fnGet FnGetFilenameFrom
 	}
 
 	// TODO -- handle DB options here
-	connstr := "file:" + filepath + "?cache=shared&mode=rw"
+	connstr := "file:" + filepath + opts.ConnstrOpts("rw")
 	db, err := sql.Open("sqlite3", connstr)
 
 	if err != nil {

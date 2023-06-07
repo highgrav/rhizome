@@ -11,15 +11,25 @@ import (
 /*
 Helper function to convert Sqlite types. Note that we only support bigint, 64-bit floats, text, and bytea fields.
 // TODO -- support bool and datetime as derived data types?
+Notes:
+  - Dates are sent back in CCYY-MM-DD with a column length of 4
+  - Timestamps are sent back as CCYY-MM-DD HH:mm:SS-zz (e.g., 2004-10-19 03:23:54-05) with a column length of 8
+  - Booleans are 't' or 'f' with a column length of 1
 */
 func getPgTypeFromSqliteType(col *sql.ColumnType) uint32 {
 	strn := strings.ToLower(col.DatabaseTypeName())
-	if strn == "boolean" || strn == "integer" || strn == "int" || strn == "tinyint" || strn == "smallint" || strn == "mediumint" || strn == "bigint" || strn == "unsigned big int" || strn == "int2" || strn == "int8" {
+	if strn == "integer" || strn == "int" || strn == "tinyint" || strn == "smallint" || strn == "mediumint" || strn == "bigint" || strn == "unsigned big int" || strn == "int2" || strn == "int8" {
 		return pgtype.Int8OID
 	} else if strn == "float" || strn == "real" || strn == "double" || strn == "double precision" || strings.HasPrefix(strn, "decimal") {
 		return pgtype.Float8OID
-	} else if strings.ToLower(col.DatabaseTypeName()) == "blob" {
+	} else if strn == "blob" {
 		return pgtype.ByteaOID
+	} else if strn == "datetime" {
+		return pgtype.TextOID
+	} else if strn == "boolean" {
+		return pgtype.TextOID
+	} else if strn == "date" {
+		return pgtype.TextOID
 	}
 	return pgtype.TextOID
 }

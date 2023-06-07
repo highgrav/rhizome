@@ -10,9 +10,9 @@ import (
 
 func TestNewDB(t *testing.T) {
 
-	fnCreate := func(id string) error {
+	fnCreate := func(id string, opts DBConnOptions) error {
 		fname := "/tmp/" + id + ".db"
-		connstr := "file:" + fname + "?cache=shared&mode=rwc"
+		connstr := "file:" + fname + opts.ConnstrOpts("rwc")
 		fmt.Println("creating test db " + fname + " with connstr " + connstr)
 		db, err := sql.Open("sqlite3", connstr)
 		if err != nil {

@@ -10,9 +10,9 @@ import (
 )
 
 func TestCreateDBMgr(t *testing.T) {
-	fnCreate := func(id string) error {
+	fnCreate := func(id string, opts DBConnOptions) error {
 		fname := "/tmp/" + id + ".db"
-		connstr := "file:" + fname + "?cache=shared&mode=rwc"
+		connstr := "file:" + fname + opts.ConnstrOpts("rwc")
 		fmt.Println("creating test db " + fname + " with connstr " + connstr)
 		db, err := sql.Open("sqlite3", connstr)
 		if err != nil {
@@ -39,7 +39,14 @@ func TestCreateDBMgr(t *testing.T) {
 		MaxDBsOpen:  500,
 		MaxIdleTime: 10 * time.Minute,
 		SweepEach:   60 * time.Second,
-	}, fnGet, fnCreate)
+	}, fnGet, fnCreate, DBConnOptions{
+		UseJModeWAL:           true,
+		CacheShared:           false,
+		SecureDeleteFast:      true,
+		AutoVacuumIncremental: true,
+		CaseSensitiveLike:     false,
+		ForeignKeys:           false,
+	})
 
 	for i := 0; i < dbm.Cfg.MaxDBsOpen; i++ {
 		id := strconv.FormatInt(int64(i), 10)
