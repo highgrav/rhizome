@@ -1,0 +1,1 @@
+Package `dbmgr` handles Sqlite3 connection management.

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/google/deck"
 	"github.com/highgrav/rhizome/internal/dbmgr"
 	"github.com/jackc/pgproto3/v2"
 	"io"
@@ -20,7 +21,7 @@ type RhizomeBackend struct {
 	db      *dbmgr.DBConn
 	stmts   map[string]*RhizomePreparedStatement
 	portals map[string]*RhizomePortal
-	logMsgs bool
+	cfg     BackendConfig
 }
 
 type RhizomePreparedStatement struct {
@@ -36,9 +37,10 @@ type RhizomePortal struct {
 	ParamsUseBinaryFormatting   []bool
 	ResultsUserBinaryFormatting []bool
 	Params                      []any
+	Cfg                         BackendConfig
 }
 
-func NewRhizomeBackend(ctx context.Context, conn net.Conn, db *dbmgr.DBManager, logMsgs bool) *RhizomeBackend {
+func NewRhizomeBackend(ctx context.Context, conn net.Conn, db *dbmgr.DBManager, cfg BackendConfig) *RhizomeBackend {
 	backend := pgproto3.NewBackend(pgproto3.NewChunkReader(conn), conn)
 
 	handler := &RhizomeBackend{
@@ -46,7 +48,7 @@ func NewRhizomeBackend(ctx context.Context, conn net.Conn, db *dbmgr.DBManager, 
 		backend: backend,
 		conn:    conn,
 		dbmgr:   db,
-		logMsgs: logMsgs,
+		cfg:     cfg,
 		stmts:   make(map[string]*RhizomePreparedStatement),
 		portals: make(map[string]*RhizomePortal),
 	}
@@ -60,6 +62,9 @@ func (rz *RhizomeBackend) start() error {
 	}
 	switch startMsg := startMsg.(type) {
 	case *pgproto3.SSLRequest:
+		if rz.cfg.LogLevel >= LogLevelDebug {
+			deck.Infof("Detected FE SSLRequest msg: %+v\n", startMsg)
+		}
 		// TODO -- right now we don't handle SSL connections
 		_, err := rz.conn.Write([]byte("N"))
 		if err != nil {
@@ -67,6 +72,9 @@ func (rz *RhizomeBackend) start() error {
 		}
 		return rz.start()
 	case *pgproto3.StartupMessage:
+		if rz.cfg.LogLevel >= LogLevelDebug {
+			deck.Infof("Detected FE Startup msg: %+v\n", startMsg)
+		}
 		dbname, ok := startMsg.Parameters["database"]
 		if !ok {
 			return errors.New("missing database name")
@@ -82,6 +90,22 @@ func (rz *RhizomeBackend) start() error {
 		}
 		rz.db = sqlconn
 		buf := (&pgproto3.AuthenticationOk{}).Encode(nil)
+		buf = (&pgproto3.ParameterStatus{
+			Name:  "client_encoding",
+			Value: "UTF8",
+		}).Encode(buf)
+		buf = (&pgproto3.ParameterStatus{
+			Name:  "server_encoding",
+			Value: "UTF8",
+		}).Encode(buf)
+
+		if rz.cfg.ServerVersion != "" {
+			buf = (&pgproto3.ParameterStatus{
+				Name:  "server_version",
+				Value: rz.cfg.ServerVersion,
+			}).Encode(buf)
+		}
+
 		buf = (&pgproto3.ReadyForQuery{TxStatus: 'I'}).Encode(buf)
 		_, err = rz.conn.Write(buf)
 		if err != nil {
@@ -107,12 +131,18 @@ func (rz *RhizomeBackend) Run() error {
 		}
 		switch msg := msg.(type) {
 		case *pgproto3.Bind:
+			if rz.cfg.LogLevel >= LogLevelDebug {
+				deck.Infof("Detected FE Bind msg: %+v\n", msg)
+			}
 			if err := rz.handleBind(msg); err != nil {
 				return err
 			}
 		case *pgproto3.CancelRequest:
 			return errors.New("received unsupported cancel request")
 		case *pgproto3.Close:
+			if rz.cfg.LogLevel >= LogLevelDebug {
+				deck.Infof("Detected FE Close msg: %+v\n", msg)
+			}
 			if err := rz.handleClose(msg); err != nil {
 				return err
 			}
@@ -123,14 +153,23 @@ func (rz *RhizomeBackend) Run() error {
 		case *pgproto3.CopyFail:
 			return errors.New("received unsupported copy fail request")
 		case *pgproto3.Describe:
+			if rz.cfg.LogLevel >= LogLevelDebug {
+				deck.Infof("Detected FE Describe msg: %+v\n", msg)
+			}
 			if err := rz.handleDescribe(msg); err != nil {
 				return err
 			}
 		case *pgproto3.Execute:
+			if rz.cfg.LogLevel >= LogLevelDebug {
+				deck.Infof("Detected FE Execute msg: %+v\n", msg)
+			}
 			if err := rz.handleExecute(msg); err != nil {
 				return err
 			}
 		case *pgproto3.Flush:
+			if rz.cfg.LogLevel >= LogLevelDebug {
+				deck.Infof("Detected FE Flush msg: %+v\n", msg)
+			}
 			if err := rz.handleFlush(msg); err != nil {
 				return err
 			}
@@ -149,6 +188,9 @@ func (rz *RhizomeBackend) Run() error {
 		case *pgproto3.StartupMessage:
 			return errors.New("received unsupported startup request (out of sequence)")
 		case *pgproto3.Sync:
+			if rz.cfg.LogLevel >= LogLevelDebug {
+				deck.Infof("Detected FE Sync msg: %+v\n", msg)
+			}
 			if err := rz.handleSync(msg); err != nil {
 				return err
 			}
@@ -156,16 +198,23 @@ func (rz *RhizomeBackend) Run() error {
 			// exit
 			return nil
 		case *pgproto3.Parse:
+			if rz.cfg.LogLevel >= LogLevelDebug {
+				deck.Infof("Detected FE Parse msg: %+v\n", msg)
+			}
 			if err := rz.handleParse(msg); err != nil {
 				return err
 			}
 		case *pgproto3.Query:
+			if rz.cfg.LogLevel >= LogLevelDebug {
+				deck.Infof("Detected FE Query msg: %+v\n", msg)
+			}
 			if err := rz.handleQuery(msg); err != nil {
 				return err
 			}
 		default:
 			return fmt.Errorf("received message other than Query from client: %#v", msg)
 		}
+
 	}
 	return nil
 }
@@ -178,13 +227,13 @@ func (rz *RhizomeBackend) close() error {
 handleQuery() responds to basic Query messages (which encode basic SQL as a text string).
 */
 func (rz *RhizomeBackend) handleQuery(msg *pgproto3.Query) error {
-	if rz.logMsgs {
+	if rz.cfg.LogLevel >= LogLevelDebug {
 		// TODO -- convert to deck logging
-		fmt.Printf("handling query %q\n", msg.String)
+		deck.Infof("handling query %q\n", msg.String)
 	}
 	if strings.HasPrefix(strings.TrimSpace(msg.String), "[[") {
-		if rz.logMsgs {
-			fmt.Printf("detected MetaDDL, rerouting...")
+		if rz.cfg.LogLevel >= LogLevelDebug {
+			deck.Infof("detected MetaDDL, rerouting...")
 			// TODO -- route meta-DDL here (for now just ACK and move on)
 			return writePgMsgs(rz.conn,
 				&pgproto3.ReadyForQuery{TxStatus: 'E'},
@@ -255,6 +304,9 @@ and named statements/portals. If the client doesn't name a statement/portal, the
 Parse statements
 */
 func (rz *RhizomeBackend) handleParse(msg *pgproto3.Parse) error {
+	if rz.cfg.LogLevel >= LogLevelDebug {
+		deck.Infof("Parsing query %q\n", msg.Query)
+	}
 	pstmt, err := rz.db.DB.PrepareContext(rz.ctx, msg.Query)
 	if err != nil {
 		return writePgMsgs(rz.conn,
@@ -322,6 +374,9 @@ func (rz *RhizomeBackend) handleBind(msg *pgproto3.Bind) error {
 }
 
 func (rz *RhizomeBackend) handleExecute(msg *pgproto3.Execute) error {
+	if rz.cfg.LogLevel >= LogLevelDebug {
+		deck.Infof("Attempting to execute portal %q\n", msg.Portal)
+	}
 	portalptr, ok := rz.portals[msg.Portal]
 	if !ok || portalptr == nil {
 		return writePgMsgs(rz.conn,
@@ -330,6 +385,9 @@ func (rz *RhizomeBackend) handleExecute(msg *pgproto3.Execute) error {
 			},
 		)
 	}
+	if rz.cfg.LogLevel >= LogLevelDebug {
+		deck.Infof("Attempting to execute stmt ID %q\n", portalptr.StmtID)
+	}
 	stmtptr, ok := rz.stmts[portalptr.StmtID]
 	if !ok || stmtptr == nil {
 		return writePgMsgs(rz.conn,
@@ -337,6 +395,9 @@ func (rz *RhizomeBackend) handleExecute(msg *pgproto3.Execute) error {
 				Message: "statement '" + portalptr.StmtID + "' does not exist",
 			},
 		)
+	}
+	if rz.cfg.LogLevel >= LogLevelDebug {
+		deck.Infof("Attempting to execute stmt literal %q\n", stmtptr.Stmt)
 	}
 
 	rows, err := stmtptr.PreparedStmt.QueryContext(rz.ctx, portalptr.Params...)
@@ -373,7 +434,11 @@ func (rz *RhizomeBackend) handleExecute(msg *pgproto3.Execute) error {
 }
 
 func (rz *RhizomeBackend) handleSync(msg *pgproto3.Sync) error {
-	return nil
+	return writePgMsgs(rz.conn,
+		&pgproto3.ReadyForQuery{
+			TxStatus: 'I',
+		},
+	)
 }
 
 func (rz *RhizomeBackend) handleDescribe(msg *pgproto3.Describe) error {

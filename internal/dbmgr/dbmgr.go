@@ -2,7 +2,7 @@ package dbmgr
 
 import (
 	"database/sql"
-	"fmt"
+	"github.com/google/deck"
 	"github.com/mattn/go-sqlite3"
 	"sync"
 	"sync/atomic"
@@ -181,7 +181,7 @@ func (dbm *DBManager) Close() {
 
 func (dbm *DBManager) CloseDB(id string) {
 	if dbm.Cfg.LogDbOpenClose {
-		fmt.Println("Closing db " + id)
+		deck.Infof("Closing db %s", id)
 	}
 	conn, ok := dbm.DBs[id]
 	if !ok || conn == nil {

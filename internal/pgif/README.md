@@ -1,0 +1,1 @@
+Package `pgif` handles the Postgres-compatible network connection layer.

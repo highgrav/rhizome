@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/highgrav/rhizome"
 	"github.com/highgrav/rhizome/internal/dbmgr"
 	"github.com/highgrav/rhizome/internal/pgif"
 	"log"
@@ -47,7 +48,7 @@ func main() {
 		FnNewDB:        fnCreate,
 		LogDbOpenClose: true,
 	}
-	mgr := dbmgr.NewDBManager(cfg, dbmgr.DBConnOptions{
+	mgr := rhizome.NewDBManager(cfg, dbmgr.DBConnOptions{
 		UseJModeWAL:           true,
 		CacheShared:           false,
 		SecureDeleteFast:      true,
@@ -65,7 +66,10 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		b := pgif.NewRhizomeBackend(context.Background(), conn, mgr, true)
+		b := rhizome.NewRhizomeBackend(context.Background(), conn, mgr, pgif.BackendConfig{
+			LogLevel:      pgif.LogLevelDebug,
+			ServerVersion: "9",
+		})
 		go func() {
 			err := b.Run()
 			if err != nil {

@@ -34,6 +34,8 @@ type DBConnOptions struct {
 	IgnoreCheckConstraints bool `opt:"_ignore_check_constraints"`
 	Immutable              bool `opt:"immutable"`
 	CacheSize              int  `opt:"_cache_size"`
+
+	DatabaseVersion string
 }
 
 func (opts *DBConnOptions) ConnstrOpts(mode string) string {

@@ -38,7 +38,7 @@ func TestNewDB(t *testing.T) {
 	os.Remove(fname)
 
 	driver := &sqlite3.SQLiteDriver{}
-	conn, err := OpenOrCreateDBConn(driver, "test", fnGet, fnCreate, DBConnOptions{})
+	conn, err := OpenOrCreateDBConn(nil, driver, "test", fnGet, fnCreate, DBConnOptions{})
 	if err != nil {
 		fmt.Println("Error opening/creating db: " + err.Error())
 		t.Error(err.Error())

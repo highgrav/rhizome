@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"github.com/highgrav/rhizome/internal/rhzdb"
 	sqlite3 "github.com/mattn/go-sqlite3"
 	"os"
 	"sync"
@@ -28,14 +29,14 @@ func OpenOrCreateDBConn(mgr *DBManager, driver *sqlite3.SQLiteDriver, id string,
 	}
 	connstr := "file:" + filepath + opts.ConnstrOpts("rw")
 
-	db, err := sql.Open("sqlite3", connstr)
+	db, err := sql.Open(rhzdb.DBDriverName, connstr)
 	if err != nil || db.Ping() != nil {
 		// try to create the DB if necessary
 		err2 := fnCreate(id, opts)
 		if err2 != nil {
 			return nil, err2
 		}
-		db, err = sql.Open("sqlite3", connstr)
+		db, err = sql.Open(rhzdb.DBDriverName, connstr)
 		if err != nil {
 			return nil, err
 		}
@@ -74,7 +75,7 @@ func OpenDBConn(mgr *DBManager, driver *sqlite3.SQLiteDriver, id string, fnGet F
 	}
 
 	connstr := "file:" + filepath + opts.ConnstrOpts("rw")
-	db, err := sql.Open("sqlite3", connstr)
+	db, err := sql.Open(rhzdb.DBDriverName, connstr)
 
 	if err != nil {
 		return nil, err
@@ -84,7 +85,9 @@ func OpenDBConn(mgr *DBManager, driver *sqlite3.SQLiteDriver, id string, fnGet F
 	if err != nil {
 		return nil, err
 	}
-	mgr.UpdateStat(StatOpenDbs, 1)
+	if mgr != nil {
+		mgr.UpdateStat(StatOpenDbs, 1)
+	}
 
 	dbc := &DBConn{
 		mgr:          mgr,
@@ -114,7 +117,7 @@ func (dbc *DBConn) Reopen() error {
 	}
 
 	connstr := "file:" + filepath + dbc.opts.ConnstrOpts("rw")
-	db, err := sql.Open("sqlite3", connstr)
+	db, err := sql.Open(rhzdb.DBDriverName, connstr)
 
 	if err != nil {
 		return err
@@ -124,17 +127,21 @@ func (dbc *DBConn) Reopen() error {
 	if err != nil {
 		return err
 	}
-	dbc.mgr.UpdateStat(StatOpenDbs, 1)
+	if dbc.mgr != nil {
+		dbc.mgr.UpdateStat(StatOpenDbs, 1)
+	}
 	dbc.LastAccessed = time.Now()
 
-	db2 := dbc.mgr.AddConn(dbc.ID, dbc)
-	if db2 != nil {
-		// race condition -- there's a valid connection already open, so close ours and use the existing one
-		// (this should prevent hanging connections)
-		_ = db.Close()
-		dbc.mgr.UpdateStat(StatOpenDbs, -1)
-		dbc.DB = db2
-		return nil
+	if dbc.mgr != nil {
+		db2 := dbc.mgr.AddConn(dbc.ID, dbc)
+		if db2 != nil {
+			// race condition -- there's a valid connection already open, so close ours and use the existing one
+			// (this should prevent hanging connections)
+			_ = db.Close()
+			dbc.mgr.UpdateStat(StatOpenDbs, -1)
+			dbc.DB = db2
+			return nil
+		}
 	}
 	dbc.DB = db
 	return nil
@@ -155,7 +162,7 @@ func (dbc *DBConn) Close() {
 	dbc.Lock()
 	defer dbc.Unlock()
 	err := dbc.DB.Close()
-	if err == nil {
+	if err == nil && dbc.mgr != nil {
 		dbc.mgr.UpdateStat(StatOpenDbs, -1)
 	}
 	dbc.DB = nil

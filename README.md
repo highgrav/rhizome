@@ -16,7 +16,11 @@ to Sqlite, and makes no attempt to translate pgsql to Sqlite's SQL dialect. In o
 not work. Also, there is no attempt to replicate Postgres' `pg_catalog` (as the excellent `Postlite` framework does), so 
 some tools may complain about being unable to query the system catalogs.
 
-### Sample Implementation
+### Usage and Sample Implementation
+Integrating Rhizome is fairly straightforward: you first set up your Deck logging, create a new `DBManager` with 
+`rhizome.NewDBManager(...)` and then, for each Postgres connection, create a new backend handler with 
+`rhizome.NewRhizomeBackend(...)` and then call `.run()` on the handler.
+
 A sample implementation can be found in `cmd/rhizd`. You can test this by creating a new Sqlite db in `/tmp`, 
 running `go run cmd/rhizd` and then attempting to connect to it via `psql`. For example, if you created a `/tmp/test.db` 
 database, you can connect to it by `psql -h localhost -p 5432 -d test`.
