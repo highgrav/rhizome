@@ -25,11 +25,11 @@ func getPgTypeFromSqliteType(col *sql.ColumnType) uint32 {
 	} else if strn == "blob" {
 		return pgtype.ByteaOID
 	} else if strn == "datetime" {
-		return pgtype.TextOID
+		return pgtype.TimestamptzOID
 	} else if strn == "boolean" {
-		return pgtype.TextOID
+		return pgtype.BoolOID
 	} else if strn == "date" {
-		return pgtype.TextOID
+		return pgtype.DateOID
 	}
 	return pgtype.TextOID
 }

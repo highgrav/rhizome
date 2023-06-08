@@ -16,6 +16,7 @@ const (
 )
 
 func (rz RhizomeBackend) handleBackupDb(msg *pgproto3.Query) error {
+
 	return nil
 }
 

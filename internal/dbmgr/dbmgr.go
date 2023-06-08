@@ -137,12 +137,14 @@ func (dbm *DBManager) GetOrCreate(id string) (*DBConn, error) {
 }
 
 func (dbm *DBManager) Open(id string, opts DBConnOptions) error {
-	dbm.Lock()
-	defer dbm.Unlock()
 	if _, ok := dbm.DBs[id]; ok {
 		return nil
 	}
-
+	if dbm.Stats[StatOpenDbs].Load() > int64(dbm.Cfg.MaxDBsOpen) {
+		return ErrTooManyDBsOpen
+	}
+	dbm.Lock()
+	defer dbm.Unlock()
 	db, err := OpenDBConn(dbm, dbm.Driver, id, dbm.GetFilename, opts)
 	if err != nil {
 		return err
@@ -152,12 +154,14 @@ func (dbm *DBManager) Open(id string, opts DBConnOptions) error {
 }
 
 func (dbm *DBManager) OpenOrCreate(id string, opts DBConnOptions) error {
-	dbm.Lock()
-	defer dbm.Unlock()
 	if _, ok := dbm.DBs[id]; ok {
 		return nil
 	}
-
+	if dbm.Stats[StatOpenDbs].Load() > int64(dbm.Cfg.MaxDBsOpen) {
+		return ErrTooManyDBsOpen
+	}
+	dbm.Lock()
+	defer dbm.Unlock()
 	db, err := OpenOrCreateDBConn(dbm, dbm.Driver, id, dbm.GetFilename, dbm.CreateDb, opts)
 	if err != nil {
 		return err

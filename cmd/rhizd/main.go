@@ -43,7 +43,6 @@ func main() {
 		MaxIdleTime:    10 * time.Second,
 		SweepEach:      10 * time.Second,
 		CheckpointEach: 5 * time.Minute,
-		UseWAL:         false,
 		FnGetDB:        fnGet,
 		FnNewDB:        fnCreate,
 		LogDbOpenClose: true,
