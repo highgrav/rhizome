@@ -66,7 +66,6 @@ func (rz *RhizomeBackend) upgradeToTLS() error {
 		}
 		return nil
 	}
-	fmt.Println("UPGRADE")
 	if rz.cfg.TLS == nil {
 		cert, err := tls.LoadX509KeyPair(path.Join(rz.cfg.TLSCertDir, rz.cfg.TLSCertName), path.Join(rz.cfg.TLSCertDir, rz.cfg.TLSKeyName))
 		if err != nil {
@@ -97,6 +96,7 @@ func (rz *RhizomeBackend) upgradeToTLS() error {
 		return err
 	}
 	rz.conn = net.Conn(sslConn)
+	rz.backend = pgproto3.NewBackend(pgproto3.NewChunkReader(rz.conn), rz.conn)
 	return nil
 }
 
@@ -114,7 +114,11 @@ func (rz *RhizomeBackend) processStart() error {
 		if err != nil {
 			return err
 		}
-		return rz.processStart()
+		// if we got this before startup, then keep processing -- this should be the default
+		if rz.db == nil {
+			return rz.processStart()
+		}
+		return nil
 	case *pgproto3.StartupMessage:
 		var sqlconn *dbmgr.DBConn
 		var err error = nil

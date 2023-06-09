@@ -3,18 +3,67 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"flag"
 	"fmt"
 	"github.com/highgrav/rhizome"
-	"github.com/highgrav/rhizome/internal/constants"
 	"github.com/highgrav/rhizome/internal/dbmgr"
 	"github.com/highgrav/rhizome/internal/pgif"
 	"github.com/mattn/go-sqlite3"
 	"log"
 	"net"
+	"os"
+	"path"
 	"time"
 )
 
+func genRhzBackend() (pgif.BackendConfig, error) {
+
+	var logLevelFlag = flag.Int("ll", 3, "Syslog level (0-7) for logging")
+	var useTlsFlag = flag.Bool("tls", false, "Whether to use TLS")
+	var tlsDirFlag = flag.String("tlsdir", "", "Directory for TLS files")
+	var tlsCertFlag = flag.String("cert", "", "TLS Cert filename")
+	var tlsKeyFlag = flag.String("key", "", "TLS Key filename")
+
+	flag.Parse()
+
+	if *useTlsFlag {
+		if *tlsDirFlag == "" || *tlsCertFlag == "" || *tlsKeyFlag == "" {
+			return pgif.BackendConfig{}, errors.New("If tls=true, tlsdir, cert, and key must all be set")
+		}
+		fi, err := os.Stat(*tlsDirFlag)
+		if err != nil {
+			return pgif.BackendConfig{}, errors.New("error opening TLS dir: " + err.Error())
+		}
+		if fi.IsDir() == false {
+			return pgif.BackendConfig{}, errors.New("error opening TLS dir: " + *tlsDirFlag + " is not a directory")
+		}
+		_, err = os.Stat(path.Join(*tlsDirFlag, *tlsCertFlag))
+		if err != nil {
+			return pgif.BackendConfig{}, errors.New("error opening TLS cert " + path.Join(*tlsDirFlag, *tlsCertFlag) + ": " + err.Error())
+		}
+		_, err = os.Stat(path.Join(*tlsDirFlag, *tlsKeyFlag))
+		if err != nil {
+			return pgif.BackendConfig{}, errors.New("error opening TLS key " + path.Join(*tlsDirFlag, *tlsKeyFlag) + ": " + err.Error())
+		}
+	}
+
+	return pgif.BackendConfig{
+		LogLevel:    *logLevelFlag,
+		UseTLS:      *useTlsFlag,
+		TLSCertDir:  *tlsDirFlag,
+		TLSCertName: *tlsCertFlag,
+		TLSKeyName:  *tlsKeyFlag,
+	}, nil
+}
+
 func main() {
+
+	rhzCfg, err := genRhzBackend()
+	if err != nil {
+		panic(err)
+	}
+
 	logFn := func(txt string) int {
 		fmt.Println(txt)
 		return len(txt)
@@ -86,7 +135,7 @@ func main() {
 		FnNewDB:         fnCreate,
 		FnCheckDBAccess: fnAuthorize,
 		LogDbOpenClose:  true,
-		LogLevel:        constants.LogLevelDebug,
+		LogLevel:        rhzCfg.LogLevel,
 	}
 	mgr := rhizome.NewDBManager(cfg, dbmgr.DBConnOptions{
 		UseJModeWAL:           true,
@@ -106,14 +155,7 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		b := rhizome.NewRhizomeBackend(context.Background(), conn, mgr, pgif.BackendConfig{
-			LogLevel:      constants.LogLevelDebug,
-			ServerVersion: "9",
-			UseTLS:        true,
-			TLSCertDir:    "/tmp/certs",
-			TLSCertName:   "server.crt",
-			TLSKeyName:    "server.key",
-		})
+		b := rhizome.NewRhizomeBackend(context.Background(), conn, mgr, rhzCfg)
 		go func() {
 			err := b.Run()
 			if err != nil {
