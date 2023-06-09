@@ -6,6 +6,11 @@ Sqlite3 is used as the backing storage and query engines for the tenant database
 behind the application server layer with reduced risk of inadvertent exposure (relative to either soft single-schema or 
 single-database multi-schema approaches).
 
+### Capabilities
+Rhizome allows implementers to provide custom functions to create, open, and authorize access to databases. In addition, 
+custom functions can be injected into the Sqlite3 runtime, allowing for additional customization.
+
+### Data Types
 Rhizome currently only supports the "canonical" Sqlite datatypes, which map to Postgres 64-bit integers, 64-bit floats, 
 varchar, or bytea. In addition, it will attempt to convert appropriate columns to Postgres date, timestamp with time zone, 
 and boolean values, though this has not been extensively tested yet; bad data in Sqlite may result in unexepected results, 

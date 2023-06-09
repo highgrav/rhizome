@@ -2,6 +2,7 @@ package pgif
 
 import (
 	"context"
+	"crypto/tls"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"github.com/jackc/pgproto3/v2"
 	"io"
 	"net"
+	"path"
 	"strings"
 )
 
@@ -22,7 +24,7 @@ type RhizomeBackend struct {
 	db      *dbmgr.DBConn
 	stmts   map[string]*RhizomePreparedStatement
 	portals map[string]*RhizomePortal
-	cfg     BackendConfig
+	cfg     *BackendConfig
 }
 
 type RhizomePreparedStatement struct {
@@ -49,11 +51,53 @@ func NewRhizomeBackend(ctx context.Context, conn net.Conn, db *dbmgr.DBManager, 
 		backend: backend,
 		conn:    conn,
 		dbmgr:   db,
-		cfg:     cfg,
+		cfg:     &cfg,
 		stmts:   make(map[string]*RhizomePreparedStatement),
 		portals: make(map[string]*RhizomePortal),
 	}
 	return handler
+}
+
+func (rz *RhizomeBackend) upgradeToTLS() error {
+	if rz.cfg.UseTLS == false || rz.cfg.TLSKeyName == "" || rz.cfg.TLSCertName == "" {
+		_, err := rz.conn.Write([]byte("N"))
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+	fmt.Println("UPGRADE")
+	if rz.cfg.TLS == nil {
+		cert, err := tls.LoadX509KeyPair(path.Join(rz.cfg.TLSCertDir, rz.cfg.TLSCertName), path.Join(rz.cfg.TLSCertDir, rz.cfg.TLSKeyName))
+		if err != nil {
+			deck.Errorf("failed to load TLS: %q", err.Error())
+			return errors.New("could not load tls: " + err.Error())
+		}
+		rz.cfg.TLS = &tls.Config{
+			Certificates: []tls.Certificate{cert},
+			ClientAuth:   tls.VerifyClientCertIfGiven,
+			ServerName:   rz.cfg.ServerName,
+		}
+		if rz.cfg.TLS.ServerName == "" {
+			rz.cfg.TLS.ServerName = "localhost"
+		}
+	}
+	var sslConn *tls.Conn
+	sslConn = tls.Server(rz.conn, rz.cfg.TLS)
+	if sslConn == nil {
+		return errors.New("could not upgrade to ssl")
+	}
+	// let the client know we're ready to upgrade
+	_, err := rz.conn.Write([]byte("S"))
+	if err != nil {
+		return err
+	}
+	err = sslConn.Handshake()
+	if err != nil {
+		return err
+	}
+	rz.conn = net.Conn(sslConn)
+	return nil
 }
 
 func (rz *RhizomeBackend) processStart() error {
@@ -64,10 +108,9 @@ func (rz *RhizomeBackend) processStart() error {
 	switch startMsg := startMsg.(type) {
 	case *pgproto3.SSLRequest:
 		if rz.cfg.LogLevel >= constants.LogLevelDebug {
-			deck.Infof("Detected FE SSLRequest msg: %+v\n", startMsg)
+			deck.Infof("Detected FE SSLRequest msg during startup: %+v\n", startMsg)
 		}
-		// TODO -- right now we don't handle SSL connections
-		_, err := rz.conn.Write([]byte("N"))
+		err := rz.upgradeToTLS()
 		if err != nil {
 			return err
 		}
@@ -113,6 +156,16 @@ func (rz *RhizomeBackend) processPwd() error {
 		return err
 	}
 	switch pwdMsg := pwdMsg.(type) {
+	case *pgproto3.SSLRequest:
+		if rz.cfg.LogLevel >= constants.LogLevelDebug {
+			deck.Infof("Detected FE SSLRequest msg during pwd: %+v\n", pwdMsg)
+		}
+
+		err := rz.upgradeToTLS()
+		if err != nil {
+			return err
+		}
+		return rz.processPwd()
 	case *pgproto3.PasswordMessage:
 
 		if rz.db.Authorize(rz.db.User, pwdMsg.Password, rz.db.ID) == false {
@@ -221,7 +274,10 @@ func (rz *RhizomeBackend) Run() error {
 		case *pgproto3.SASLResponse:
 			return errors.New("received unsupported sasl response request")
 		case *pgproto3.SSLRequest:
-			return errors.New("received unsupported ssl request (out of sequence)")
+			err := rz.upgradeToTLS()
+			if err != nil {
+				return err
+			}
 		case *pgproto3.StartupMessage:
 			return errors.New("received unsupported startup request (out of sequence)")
 		case *pgproto3.Sync:

@@ -69,22 +69,24 @@ func main() {
 		return nil
 	}
 
+	fnAuthorize := func(username, pwd, db string) (bool, error) {
+		if username == "test" && pwd == "test" {
+			return true, nil
+		}
+		return false, nil
+	}
+
 	cfg := dbmgr.DBManagerConfig{
-		BaseDir:        "/tmp/",
-		MaxDBsOpen:     500,
-		MaxIdleTime:    10 * time.Second,
-		SweepEach:      10 * time.Second,
-		CheckpointEach: 5 * time.Minute,
-		FnGetDB:        fnGet,
-		FnNewDB:        fnCreate,
-		FnCheckDBAccess: func(username, pwd, db string) (bool, error) {
-			if username == "test" && pwd == "test" && db == "test2" {
-				return true, nil
-			}
-			return false, nil
-		},
-		LogDbOpenClose: true,
-		LogLevel:       constants.LogLevelDebug,
+		BaseDir:         "/tmp/",
+		MaxDBsOpen:      500,
+		MaxIdleTime:     10 * time.Second,
+		SweepEach:       10 * time.Second,
+		CheckpointEach:  5 * time.Minute,
+		FnGetDB:         fnGet,
+		FnNewDB:         fnCreate,
+		FnCheckDBAccess: fnAuthorize,
+		LogDbOpenClose:  true,
+		LogLevel:        constants.LogLevelDebug,
 	}
 	mgr := rhizome.NewDBManager(cfg, dbmgr.DBConnOptions{
 		UseJModeWAL:           true,
@@ -107,6 +109,10 @@ func main() {
 		b := rhizome.NewRhizomeBackend(context.Background(), conn, mgr, pgif.BackendConfig{
 			LogLevel:      constants.LogLevelDebug,
 			ServerVersion: "9",
+			UseTLS:        true,
+			TLSCertDir:    "/tmp/certs",
+			TLSCertName:   "server.crt",
+			TLSKeyName:    "server.key",
 		})
 		go func() {
 			err := b.Run()
