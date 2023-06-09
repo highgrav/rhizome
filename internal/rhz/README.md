@@ -1,2 +1,0 @@
-Package `rhzdb` wraps the `sqlite3-go` driver in a new `sql` driver, so we can add in a few specific functions and tools. 
-This does not need to be accessed by framework or database users; only the `dbmgr` package needs to use it.

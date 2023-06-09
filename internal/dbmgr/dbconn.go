@@ -16,10 +16,11 @@ type DBConn struct {
 	LastAccessed time.Time
 	ID           string
 	DB           *sql.DB
-	mgr          *DBManager
+	Mgr          *DBManager
 	driver       *sqlite3.SQLiteDriver
 	opts         DBConnOptions
 	fnGet        FnGetFilenameFromID
+	User         string
 }
 
 func OpenOrCreateDBConn(mgr *DBManager, driver *sqlite3.SQLiteDriver, id string, fnGet FnGetFilenameFromID, fnCreate FnCreateNewDB, opts DBConnOptions) (*DBConn, error) {
@@ -53,7 +54,7 @@ func OpenOrCreateDBConn(mgr *DBManager, driver *sqlite3.SQLiteDriver, id string,
 	}
 
 	dbc := &DBConn{
-		mgr:          mgr,
+		Mgr:          mgr,
 		LastAccessed: time.Now(),
 		ID:           id,
 		DB:           db,
@@ -94,7 +95,7 @@ func OpenDBConn(mgr *DBManager, driver *sqlite3.SQLiteDriver, id string, fnGet F
 	}
 
 	dbc := &DBConn{
-		mgr:          mgr,
+		Mgr:          mgr,
 		LastAccessed: time.Now(),
 		ID:           id,
 		DB:           db,
@@ -103,6 +104,18 @@ func OpenDBConn(mgr *DBManager, driver *sqlite3.SQLiteDriver, id string, fnGet F
 		fnGet:        fnGet,
 	}
 	return dbc, nil
+}
+
+func (dbc *DBConn) Authorize(username, pwd, db string) bool {
+	if dbc.Mgr.Cfg.FnCheckDBAccess == nil {
+		return true
+	}
+	v, err := dbc.Mgr.Cfg.FnCheckDBAccess(username, pwd, db)
+	if err != nil {
+		// TODO -- log this
+		return false
+	}
+	return v
 }
 
 func (dbc *DBConn) Reopen() error {
@@ -131,18 +144,18 @@ func (dbc *DBConn) Reopen() error {
 	if err != nil {
 		return err
 	}
-	if dbc.mgr != nil {
-		dbc.mgr.UpdateStat(constants.StatOpenDbs, 1)
+	if dbc.Mgr != nil {
+		dbc.Mgr.UpdateStat(constants.StatOpenDbs, 1)
 	}
 	dbc.LastAccessed = time.Now()
 
-	if dbc.mgr != nil {
-		db2 := dbc.mgr.AddConn(dbc.ID, dbc)
+	if dbc.Mgr != nil {
+		db2 := dbc.Mgr.AddConn(dbc.ID, dbc)
 		if db2 != nil {
 			// race condition -- there's a valid connection already open, so close ours and use the existing one
 			// (this should prevent hanging connections)
 			_ = db.Close()
-			dbc.mgr.UpdateStat(constants.StatOpenDbs, -1)
+			dbc.Mgr.UpdateStat(constants.StatOpenDbs, -1)
 			dbc.DB = db2
 			return nil
 		}
@@ -175,8 +188,8 @@ func (dbc *DBConn) Close() {
 	dbc.Lock()
 	defer dbc.Unlock()
 	err := dbc.DB.Close()
-	if err == nil && dbc.mgr != nil {
-		dbc.mgr.UpdateStat(constants.StatOpenDbs, -1)
+	if err == nil && dbc.Mgr != nil {
+		dbc.Mgr.UpdateStat(constants.StatOpenDbs, -1)
 	}
 	dbc.DB = nil
 }
@@ -233,7 +246,7 @@ func (dbc *DBConn) Query(query string, args ...any) (*sql.Rows, error) {
 }
 
 func (dbc *DBConn) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
-	if dbc.mgr.Cfg.LogLevel >= constants.LogLevelDebug {
+	if dbc.Mgr.Cfg.LogLevel >= constants.LogLevelDebug {
 		deck.Infof("running query %q on db %s", query, dbc.ID)
 	}
 	if dbc.DB == nil {

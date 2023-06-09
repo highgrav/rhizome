@@ -56,7 +56,7 @@ func NewRhizomeBackend(ctx context.Context, conn net.Conn, db *dbmgr.DBManager, 
 	return handler
 }
 
-func (rz *RhizomeBackend) start() error {
+func (rz *RhizomeBackend) processStart() error {
 	startMsg, err := rz.backend.ReceiveStartupMessage()
 	if err != nil {
 		return err
@@ -71,8 +71,10 @@ func (rz *RhizomeBackend) start() error {
 		if err != nil {
 			return err
 		}
-		return rz.start()
+		return rz.processStart()
 	case *pgproto3.StartupMessage:
+		var sqlconn *dbmgr.DBConn
+		var err error = nil
 		if rz.cfg.LogLevel >= constants.LogLevelDebug {
 			deck.Infof("Detected FE Startup msg: %+v\n", startMsg)
 		}
@@ -80,7 +82,12 @@ func (rz *RhizomeBackend) start() error {
 		if !ok {
 			return errors.New("missing database name")
 		}
-		sqlconn, err := rz.dbmgr.Get(dbname)
+		username, ok := startMsg.Parameters["user"]
+		if !ok {
+			return errors.New("missing username")
+		}
+		sqlconn, err = rz.dbmgr.Get(dbname)
+		sqlconn.User = username
 		if err != nil {
 			writePgMsgs(rz.conn,
 				&pgproto3.ErrorResponse{
@@ -90,6 +97,28 @@ func (rz *RhizomeBackend) start() error {
 			return err
 		}
 		rz.db = sqlconn
+		buf := []byte{}
+		buf = (&pgproto3.AuthenticationCleartextPassword{}).Encode(buf)
+		_, err = rz.conn.Write(buf)
+		return rz.processPwd()
+	default:
+		return fmt.Errorf("unknown pg startup msg: %#v", startMsg)
+	}
+	return nil
+}
+
+func (rz *RhizomeBackend) processPwd() error {
+	pwdMsg, err := rz.backend.Receive()
+	if err != nil {
+		return err
+	}
+	switch pwdMsg := pwdMsg.(type) {
+	case *pgproto3.PasswordMessage:
+
+		if rz.db.Authorize(rz.db.User, pwdMsg.Password, rz.db.ID) == false {
+			return errors.New("not authorized")
+		}
+
 		buf := (&pgproto3.AuthenticationOk{}).Encode(nil)
 		buf = (&pgproto3.ParameterStatus{
 			Name:  "client_encoding",
@@ -112,16 +141,23 @@ func (rz *RhizomeBackend) start() error {
 		if err != nil {
 			return fmt.Errorf("error sending ready for query: %w", err)
 		}
+		return nil
 	default:
-		return fmt.Errorf("unknown pg startup msg: %#v", startMsg)
+		return fmt.Errorf("unknown pg startup msg: %#v", pwdMsg)
 	}
 	return nil
 }
 
 func (rz *RhizomeBackend) Run() error {
 	defer rz.close()
-	err := rz.start()
+	err := rz.processStart()
 	if err != nil {
+		var buf []byte
+		buf = (&pgproto3.ErrorResponse{
+			Severity: "fatal",
+			Message:  "not authorized",
+		}).Encode(buf)
+		_, err = rz.conn.Write(buf)
 		return err
 	}
 	for {
@@ -179,7 +215,7 @@ func (rz *RhizomeBackend) Run() error {
 		case *pgproto3.GSSEncRequest:
 			return errors.New("received unsupported gssenc request")
 		case *pgproto3.PasswordMessage:
-			return errors.New("received unsupported password message request")
+			return errors.New("received out of band password ")
 		case *pgproto3.SASLInitialResponse:
 			return errors.New("received unsupported sasl initial response request")
 		case *pgproto3.SASLResponse:

@@ -77,6 +77,12 @@ func main() {
 		CheckpointEach: 5 * time.Minute,
 		FnGetDB:        fnGet,
 		FnNewDB:        fnCreate,
+		FnCheckDBAccess: func(username, pwd, db string) (bool, error) {
+			if username == "test" && pwd == "test" && db == "test2" {
+				return true, nil
+			}
+			return false, nil
+		},
 		LogDbOpenClose: true,
 		LogLevel:       constants.LogLevelDebug,
 	}
