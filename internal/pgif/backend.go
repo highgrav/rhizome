@@ -134,7 +134,6 @@ func (rz *RhizomeBackend) processStart() error {
 			return errors.New("missing username")
 		}
 		sqlconn, err = rz.dbmgr.Get(dbname)
-		sqlconn.User = username
 		if err != nil {
 			writePgMsgs(rz.conn,
 				&pgproto3.ErrorResponse{
@@ -143,6 +142,7 @@ func (rz *RhizomeBackend) processStart() error {
 			)
 			return err
 		}
+		sqlconn.User = username
 		rz.db = sqlconn
 		buf := []byte{}
 		buf = (&pgproto3.AuthenticationCleartextPassword{}).Encode(buf)

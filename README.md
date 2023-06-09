@@ -8,7 +8,7 @@ single-database multi-schema approaches).
 
 ### Capabilities
 Rhizome allows implementers to provide custom functions to create, open, and authorize access to databases. In addition, 
-custom functions can be injected into the Sqlite3 runtime, allowing for additional customization.
+custom functions can be injected into the Sqlite3 runtime, allowing for additional customization. 
 
 ### Data Types
 Rhizome currently only supports the "canonical" Sqlite datatypes, which map to Postgres 64-bit integers, 64-bit floats, 
@@ -30,7 +30,9 @@ Integrating Rhizome is fairly straightforward: you first set up your Deck loggin
 
 A sample implementation can be found in `cmd/rhizd`. You can test this by creating a new Sqlite db in `/tmp`, 
 running `go run cmd/rhizd` and then attempting to connect to it via `psql`. For example, if you created a `/tmp/test.db` 
-database, you can connect to it by `psql -h localhost -p 5432 -d test`.
+database, you can connect to it by `psql -h localhost -p 5432 -d test`. You can also create a TLS keypair and enable TLS 
+on the server (e.g., `rhizd --tls=true --tlsdir=/tmp/certs --cert=server.crt --key=server.key`). Check the `README.md` 
+file in the `/cmd/rhizd` directory for more details on available flags.
 
 
 ### Warning

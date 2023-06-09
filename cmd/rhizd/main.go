@@ -3,65 +3,97 @@ package main
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"flag"
 	"fmt"
 	"github.com/highgrav/rhizome"
 	"github.com/highgrav/rhizome/internal/dbmgr"
 	"github.com/highgrav/rhizome/internal/pgif"
 	"github.com/mattn/go-sqlite3"
+	"github.com/tg123/go-htpasswd"
 	"log"
 	"net"
 	"os"
 	"path"
+	"strconv"
 	"time"
 )
 
-func genRhzBackend() (pgif.BackendConfig, error) {
+func main() {
+	var htaccess *htpasswd.File = nil
+	var htgroups *htpasswd.HTGroup = nil
 
+	var portFlag = flag.Int("port", 5432, "Port to listen on")
+	var dbDirFlag = flag.String("dir", "/tmp", "Directory for database files")
 	var logLevelFlag = flag.Int("ll", 3, "Syslog level (0-7) for logging")
-	var useTlsFlag = flag.Bool("tls", false, "Whether to use TLS")
-	var tlsDirFlag = flag.String("tlsdir", "", "Directory for TLS files")
+	var tlsDirFlag = flag.String("tlsdir", "", "Directory for TLS files, if any")
 	var tlsCertFlag = flag.String("cert", "", "TLS Cert filename")
 	var tlsKeyFlag = flag.String("key", "", "TLS Key filename")
-
+	var accessDirFlag = flag.String("udir", "", "Directory of the user and group files, if any")
+	var accessFileFlag = flag.String("ufile", "", "Path and name of the user file, if any")
+	var groupFileFlag = flag.String("gfile", "", "Path and name of the groups file, if any")
 	flag.Parse()
 
-	if *useTlsFlag {
+	htdir := *accessDirFlag
+	htfile := *accessFileFlag
+	grpfile := *groupFileFlag
+
+	if htdir != "" && htfile != "" {
+		fs, err := os.Stat(path.Join(htdir, htfile))
+		if err != nil || fs.IsDir() {
+			panic("user file " + path.Join(htdir, htfile) + " does not exist or is a directory")
+		}
+		htaccess, err = htpasswd.New(path.Join(htdir, htfile), htpasswd.DefaultSystems, nil)
+		if err != nil {
+			panic("failure to open user file " + path.Join(htdir, htfile) + ": " + err.Error())
+		}
+		if grpfile != "" {
+			htgroups, err = htpasswd.NewGroups(path.Join(htdir, grpfile), nil)
+			if err != nil {
+				panic("failure to open groups file " + path.Join(htdir, grpfile))
+			}
+		}
+	}
+	if htaccess != nil {
+		fmt.Println("Opened user file " + path.Join(htdir, htfile))
+	}
+	if htgroups != nil {
+		fmt.Println("Opened group file " + path.Join(htdir, grpfile))
+	}
+	port := *portFlag
+	dbDir := *dbDirFlag
+	fs, err := os.Stat(dbDir)
+	if err != nil || fs.IsDir() == false {
+		panic("DB dir " + dbDir + " does not exist or is not a directory")
+	}
+	if *tlsDirFlag != "" {
 		if *tlsDirFlag == "" || *tlsCertFlag == "" || *tlsKeyFlag == "" {
-			return pgif.BackendConfig{}, errors.New("If tls=true, tlsdir, cert, and key must all be set")
+			panic("If tls=true, tlsdir, cert, and key must all be set")
 		}
 		fi, err := os.Stat(*tlsDirFlag)
 		if err != nil {
-			return pgif.BackendConfig{}, errors.New("error opening TLS dir: " + err.Error())
+			panic("error opening TLS dir: " + err.Error())
 		}
 		if fi.IsDir() == false {
-			return pgif.BackendConfig{}, errors.New("error opening TLS dir: " + *tlsDirFlag + " is not a directory")
+			panic("error opening TLS dir: " + *tlsDirFlag + " is not a directory")
 		}
 		_, err = os.Stat(path.Join(*tlsDirFlag, *tlsCertFlag))
 		if err != nil {
-			return pgif.BackendConfig{}, errors.New("error opening TLS cert " + path.Join(*tlsDirFlag, *tlsCertFlag) + ": " + err.Error())
+			panic("error opening TLS cert " + path.Join(*tlsDirFlag, *tlsCertFlag) + ": " + err.Error())
 		}
 		_, err = os.Stat(path.Join(*tlsDirFlag, *tlsKeyFlag))
 		if err != nil {
-			return pgif.BackendConfig{}, errors.New("error opening TLS key " + path.Join(*tlsDirFlag, *tlsKeyFlag) + ": " + err.Error())
+			panic("error opening TLS key " + path.Join(*tlsDirFlag, *tlsKeyFlag) + ": " + err.Error())
 		}
 	}
 
-	return pgif.BackendConfig{
+	rhzCfg := pgif.BackendConfig{
 		LogLevel:    *logLevelFlag,
-		UseTLS:      *useTlsFlag,
 		TLSCertDir:  *tlsDirFlag,
 		TLSCertName: *tlsCertFlag,
 		TLSKeyName:  *tlsKeyFlag,
-	}, nil
-}
-
-func main() {
-
-	rhzCfg, err := genRhzBackend()
-	if err != nil {
-		panic(err)
+	}
+	if *tlsDirFlag != "" {
+		rhzCfg.UseTLS = true
 	}
 
 	logFn := func(txt string) int {
@@ -95,11 +127,11 @@ func main() {
 	})
 
 	fnGet := func(id string) (string, error) {
-		return "/tmp/" + id + ".db", nil
+		return path.Join(dbDir, id+".db"), nil
 	}
 
 	fnCreate := func(id string, opts dbmgr.DBConnOptions) error {
-		fname := "/tmp/" + id + ".db"
+		fname := dbDir + id + ".db"
 		connstr := "file:" + fname + opts.ConnstrOpts("rwc")
 		fmt.Println("creating test db " + fname + " with connstr " + connstr)
 		db, err := sql.Open("sqlite3", connstr)
@@ -119,14 +151,20 @@ func main() {
 	}
 
 	fnAuthorize := func(username, pwd, db string) (bool, error) {
-		if username == "test" && pwd == "test" {
+		if htaccess == nil {
 			return true, nil
 		}
-		return false, nil
+		if !htaccess.Match(username, pwd) {
+			return false, nil
+		}
+		if htgroups == nil {
+			return true, nil
+		}
+		return htgroups.IsUserInGroup(username, db), nil
 	}
 
 	cfg := dbmgr.DBManagerConfig{
-		BaseDir:         "/tmp/",
+		BaseDir:         dbDir,
 		MaxDBsOpen:      500,
 		MaxIdleTime:     10 * time.Second,
 		SweepEach:       10 * time.Second,
@@ -145,8 +183,8 @@ func main() {
 		CaseSensitiveLike:     false,
 		ForeignKeys:           false,
 	})
-	ln, err := net.Listen("tcp", ":5432")
-	fmt.Println("listening...")
+	ln, err := net.Listen("tcp", ":"+strconv.FormatInt(int64(port), 10))
+	fmt.Printf("listening on port %d...\n", port)
 	if err != nil {
 		panic(err)
 	}
