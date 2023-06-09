@@ -3,6 +3,7 @@ package dbmgr
 import (
 	"database/sql"
 	"fmt"
+	"github.com/highgrav/rhizome/internal/rhz"
 	"runtime"
 	"strconv"
 	"testing"
@@ -10,6 +11,7 @@ import (
 )
 
 func TestCreateDBMgr(t *testing.T) {
+	rhz.Init(rhz.RhizomeConfig{})
 	fnCreate := func(id string, opts DBConnOptions) error {
 		fname := "/tmp/" + id + ".db"
 		connstr := "file:" + fname + opts.ConnstrOpts("rwc")
@@ -39,7 +41,9 @@ func TestCreateDBMgr(t *testing.T) {
 		MaxDBsOpen:  500,
 		MaxIdleTime: 10 * time.Minute,
 		SweepEach:   60 * time.Second,
-	}, fnGet, fnCreate, DBConnOptions{
+		FnGetDB:     fnGet,
+		FnNewDB:     fnCreate,
+	}, DBConnOptions{
 		UseJModeWAL:           true,
 		CacheShared:           false,
 		SecureDeleteFast:      true,

@@ -13,12 +13,14 @@ type FnCheckDBAccess func(username, pwd, db string) (bool, error)
 type FnCheckDBRight func(username, pwd, db, right string) (bool, error)
 
 type DBManagerConfig struct {
-	BaseDir         string
-	MaxDBsOpen      int
-	LogDbOpenClose  bool
-	MaxIdleTime     time.Duration
-	SweepEach       time.Duration
-	CheckpointEach  time.Duration
+	LogLevel       int
+	BaseDir        string
+	MaxDBsOpen     int
+	LogDbOpenClose bool
+	MaxIdleTime    time.Duration
+	SweepEach      time.Duration
+	CheckpointEach time.Duration
+
 	FnGetDB         FnGetFilenameFromID
 	FnNewDB         FnCreateNewDB
 	FnAddUser       FnAddUser

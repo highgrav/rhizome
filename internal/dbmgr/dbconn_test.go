@@ -3,13 +3,15 @@ package dbmgr
 import (
 	"database/sql"
 	"fmt"
+	"github.com/highgrav/rhizome/internal/rhz"
 	"github.com/mattn/go-sqlite3"
 	"os"
 	"testing"
+	"time"
 )
 
 func TestNewDB(t *testing.T) {
-
+	rhz.Init(rhz.RhizomeConfig{})
 	fnCreate := func(id string, opts DBConnOptions) error {
 		fname := "/tmp/" + id + ".db"
 		connstr := "file:" + fname + opts.ConnstrOpts("rwc")
@@ -34,11 +36,28 @@ func TestNewDB(t *testing.T) {
 		return "/tmp/" + id + ".db", nil
 	}
 
-	fname, _ := fnGet("test")
+	dbm := NewDBManager(DBManagerConfig{
+		BaseDir:     "",
+		MaxDBsOpen:  500,
+		MaxIdleTime: 10 * time.Minute,
+		SweepEach:   60 * time.Second,
+		FnGetDB:     fnGet,
+		FnNewDB:     fnCreate,
+	}, DBConnOptions{
+		UseJModeWAL:           true,
+		CacheShared:           false,
+		SecureDeleteFast:      true,
+		AutoVacuumIncremental: true,
+		CaseSensitiveLike:     false,
+		ForeignKeys:           false,
+	})
+
+	fid := "testdb"
+	fname, _ := fnGet(fid)
 	os.Remove(fname)
 
 	driver := &sqlite3.SQLiteDriver{}
-	conn, err := OpenOrCreateDBConn(nil, driver, "test", fnGet, fnCreate, DBConnOptions{})
+	conn, err := OpenOrCreateDBConn(dbm, driver, fid, fnGet, fnCreate, DBConnOptions{})
 	if err != nil {
 		fmt.Println("Error opening/creating db: " + err.Error())
 		t.Error(err.Error())

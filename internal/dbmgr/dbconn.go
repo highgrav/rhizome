@@ -3,8 +3,8 @@ package dbmgr
 import (
 	"context"
 	"database/sql"
-	"errors"
-	"github.com/highgrav/rhizome/internal/rhzdb"
+	"github.com/google/deck"
+	"github.com/highgrav/rhizome/internal/constants"
 	sqlite3 "github.com/mattn/go-sqlite3"
 	"os"
 	"sync"
@@ -23,20 +23,22 @@ type DBConn struct {
 }
 
 func OpenOrCreateDBConn(mgr *DBManager, driver *sqlite3.SQLiteDriver, id string, fnGet FnGetFilenameFromID, fnCreate FnCreateNewDB, opts DBConnOptions) (*DBConn, error) {
+
 	filepath, err := fnGet(id)
 	if err != nil {
 		return nil, err
 	}
 	connstr := "file:" + filepath + opts.ConnstrOpts("rw")
 
-	db, err := sql.Open(rhzdb.DBDriverName, connstr)
+	db, err := sql.Open(constants.DBDriverName, connstr)
+
 	if err != nil || db.Ping() != nil {
 		// try to create the DB if necessary
 		err2 := fnCreate(id, opts)
 		if err2 != nil {
 			return nil, err2
 		}
-		db, err = sql.Open(rhzdb.DBDriverName, connstr)
+		db, err = sql.Open(constants.DBDriverName, connstr)
 		if err != nil {
 			return nil, err
 		}
@@ -46,7 +48,9 @@ func OpenOrCreateDBConn(mgr *DBManager, driver *sqlite3.SQLiteDriver, id string,
 	if err != nil {
 		return nil, err
 	}
-	mgr.UpdateStat(StatOpenDbs, 1)
+	if mgr != nil {
+		mgr.UpdateStat(constants.StatOpenDbs, 1)
+	}
 
 	dbc := &DBConn{
 		mgr:          mgr,
@@ -75,7 +79,7 @@ func OpenDBConn(mgr *DBManager, driver *sqlite3.SQLiteDriver, id string, fnGet F
 	}
 
 	connstr := "file:" + filepath + opts.ConnstrOpts("rw")
-	db, err := sql.Open(rhzdb.DBDriverName, connstr)
+	db, err := sql.Open(constants.DBDriverName, connstr)
 
 	if err != nil {
 		return nil, err
@@ -86,7 +90,7 @@ func OpenDBConn(mgr *DBManager, driver *sqlite3.SQLiteDriver, id string, fnGet F
 		return nil, err
 	}
 	if mgr != nil {
-		mgr.UpdateStat(StatOpenDbs, 1)
+		mgr.UpdateStat(constants.StatOpenDbs, 1)
 	}
 
 	dbc := &DBConn{
@@ -117,7 +121,7 @@ func (dbc *DBConn) Reopen() error {
 	}
 
 	connstr := "file:" + filepath + dbc.opts.ConnstrOpts("rw")
-	db, err := sql.Open(rhzdb.DBDriverName, connstr)
+	db, err := sql.Open(constants.DBDriverName, connstr)
 
 	if err != nil {
 		return err
@@ -128,7 +132,7 @@ func (dbc *DBConn) Reopen() error {
 		return err
 	}
 	if dbc.mgr != nil {
-		dbc.mgr.UpdateStat(StatOpenDbs, 1)
+		dbc.mgr.UpdateStat(constants.StatOpenDbs, 1)
 	}
 	dbc.LastAccessed = time.Now()
 
@@ -138,13 +142,22 @@ func (dbc *DBConn) Reopen() error {
 			// race condition -- there's a valid connection already open, so close ours and use the existing one
 			// (this should prevent hanging connections)
 			_ = db.Close()
-			dbc.mgr.UpdateStat(StatOpenDbs, -1)
+			dbc.mgr.UpdateStat(constants.StatOpenDbs, -1)
 			dbc.DB = db2
 			return nil
 		}
 	}
+	if err != nil {
+		dbc.DB = nil
+		return err
+	}
 	dbc.DB = db
+
 	return nil
+}
+
+func (dbc *DBConn) Conn(ctx context.Context) (*sql.Conn, error) {
+	return dbc.DB.Conn(ctx)
 }
 
 func (dbc *DBConn) Ping() error {
@@ -163,7 +176,7 @@ func (dbc *DBConn) Close() {
 	defer dbc.Unlock()
 	err := dbc.DB.Close()
 	if err == nil && dbc.mgr != nil {
-		dbc.mgr.UpdateStat(StatOpenDbs, -1)
+		dbc.mgr.UpdateStat(constants.StatOpenDbs, -1)
 	}
 	dbc.DB = nil
 }
@@ -201,23 +214,28 @@ func (dbc *DBConn) Exec(query string, args ...any) (sql.Result, error) {
 	dbc.Lock()
 	defer dbc.Unlock()
 	dbc.LastAccessed = time.Now()
-	return dbc.DB.Exec(query, args...)
+	c, err := dbc.Conn(context.Background())
+	if err != nil {
+		return nil, err
+	}
+
+	r, err := c.ExecContext(context.Background(), query, args...)
+	if err != nil {
+		_ = c.Close()
+		return nil, err
+	}
+	err = c.Close()
+	return r, err
 }
 
 func (dbc *DBConn) Query(query string, args ...any) (*sql.Rows, error) {
-	if dbc.DB == nil {
-		err := dbc.Reopen()
-		if err != nil {
-			return nil, err
-		}
-	}
-	dbc.RLock()
-	defer dbc.RUnlock()
-	dbc.LastAccessed = time.Now()
 	return dbc.QueryContext(context.Background(), query, args...)
 }
 
 func (dbc *DBConn) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	if dbc.mgr.Cfg.LogLevel >= constants.LogLevelDebug {
+		deck.Infof("running query %q on db %s", query, dbc.ID)
+	}
 	if dbc.DB == nil {
 		err := dbc.Reopen()
 		if err != nil {
@@ -227,10 +245,16 @@ func (dbc *DBConn) QueryContext(ctx context.Context, query string, args ...any) 
 	dbc.RLock()
 	defer dbc.RUnlock()
 	dbc.LastAccessed = time.Now()
+
 	return dbc.DB.QueryContext(ctx, query, args...)
+
 }
 
 func (dbc *DBConn) QueryRow(query string, args ...any) (*sql.Row, error) {
+	return dbc.QueryRowContext(context.Background(), query, args...)
+}
+
+func (dbc *DBConn) QueryRowContext(ctx context.Context, query string, args ...any) (*sql.Row, error) {
 	if dbc.DB == nil {
 		err := dbc.Reopen()
 		if err != nil {
@@ -240,9 +264,7 @@ func (dbc *DBConn) QueryRow(query string, args ...any) (*sql.Row, error) {
 	dbc.RLock()
 	defer dbc.RUnlock()
 	dbc.LastAccessed = time.Now()
-	res := dbc.DB.QueryRow(query, args...)
-	if res == nil {
-		return nil, errors.New("failed to get query response")
-	}
-	return res, nil
+
+	row := dbc.DB.QueryRowContext(ctx, query, args...)
+	return row, nil
 }

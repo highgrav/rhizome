@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/google/deck"
+	"github.com/highgrav/rhizome/internal/constants"
 	"github.com/highgrav/rhizome/internal/dbmgr"
 	"github.com/jackc/pgproto3/v2"
 	"io"
@@ -62,7 +63,7 @@ func (rz *RhizomeBackend) start() error {
 	}
 	switch startMsg := startMsg.(type) {
 	case *pgproto3.SSLRequest:
-		if rz.cfg.LogLevel >= LogLevelDebug {
+		if rz.cfg.LogLevel >= constants.LogLevelDebug {
 			deck.Infof("Detected FE SSLRequest msg: %+v\n", startMsg)
 		}
 		// TODO -- right now we don't handle SSL connections
@@ -72,7 +73,7 @@ func (rz *RhizomeBackend) start() error {
 		}
 		return rz.start()
 	case *pgproto3.StartupMessage:
-		if rz.cfg.LogLevel >= LogLevelDebug {
+		if rz.cfg.LogLevel >= constants.LogLevelDebug {
 			deck.Infof("Detected FE Startup msg: %+v\n", startMsg)
 		}
 		dbname, ok := startMsg.Parameters["database"]
@@ -131,7 +132,7 @@ func (rz *RhizomeBackend) Run() error {
 		}
 		switch msg := msg.(type) {
 		case *pgproto3.Bind:
-			if rz.cfg.LogLevel >= LogLevelDebug {
+			if rz.cfg.LogLevel >= constants.LogLevelDebug {
 				deck.Infof("Detected FE Bind msg: %+v\n", msg)
 			}
 			if err := rz.handleBind(msg); err != nil {
@@ -140,7 +141,7 @@ func (rz *RhizomeBackend) Run() error {
 		case *pgproto3.CancelRequest:
 			return errors.New("received unsupported cancel request")
 		case *pgproto3.Close:
-			if rz.cfg.LogLevel >= LogLevelDebug {
+			if rz.cfg.LogLevel >= constants.LogLevelDebug {
 				deck.Infof("Detected FE Close msg: %+v\n", msg)
 			}
 			if err := rz.handleClose(msg); err != nil {
@@ -153,21 +154,21 @@ func (rz *RhizomeBackend) Run() error {
 		case *pgproto3.CopyFail:
 			return errors.New("received unsupported copy fail request")
 		case *pgproto3.Describe:
-			if rz.cfg.LogLevel >= LogLevelDebug {
+			if rz.cfg.LogLevel >= constants.LogLevelDebug {
 				deck.Infof("Detected FE Describe msg: %+v\n", msg)
 			}
 			if err := rz.handleDescribe(msg); err != nil {
 				return err
 			}
 		case *pgproto3.Execute:
-			if rz.cfg.LogLevel >= LogLevelDebug {
+			if rz.cfg.LogLevel >= constants.LogLevelDebug {
 				deck.Infof("Detected FE Execute msg: %+v\n", msg)
 			}
 			if err := rz.handleExecute(msg); err != nil {
 				return err
 			}
 		case *pgproto3.Flush:
-			if rz.cfg.LogLevel >= LogLevelDebug {
+			if rz.cfg.LogLevel >= constants.LogLevelDebug {
 				deck.Infof("Detected FE Flush msg: %+v\n", msg)
 			}
 			if err := rz.handleFlush(msg); err != nil {
@@ -188,7 +189,7 @@ func (rz *RhizomeBackend) Run() error {
 		case *pgproto3.StartupMessage:
 			return errors.New("received unsupported startup request (out of sequence)")
 		case *pgproto3.Sync:
-			if rz.cfg.LogLevel >= LogLevelDebug {
+			if rz.cfg.LogLevel >= constants.LogLevelDebug {
 				deck.Infof("Detected FE Sync msg: %+v\n", msg)
 			}
 			if err := rz.handleSync(msg); err != nil {
@@ -198,14 +199,14 @@ func (rz *RhizomeBackend) Run() error {
 			// exit
 			return nil
 		case *pgproto3.Parse:
-			if rz.cfg.LogLevel >= LogLevelDebug {
+			if rz.cfg.LogLevel >= constants.LogLevelDebug {
 				deck.Infof("Detected FE Parse msg: %+v\n", msg)
 			}
 			if err := rz.handleParse(msg); err != nil {
 				return err
 			}
 		case *pgproto3.Query:
-			if rz.cfg.LogLevel >= LogLevelDebug {
+			if rz.cfg.LogLevel >= constants.LogLevelDebug {
 				deck.Infof("Detected FE Query msg: %+v\n", msg)
 			}
 			if err := rz.handleQuery(msg); err != nil {
@@ -227,12 +228,12 @@ func (rz *RhizomeBackend) close() error {
 handleQuery() responds to basic Query messages (which encode basic SQL as a text string).
 */
 func (rz *RhizomeBackend) handleQuery(msg *pgproto3.Query) error {
-	if rz.cfg.LogLevel >= LogLevelDebug {
+	if rz.cfg.LogLevel >= constants.LogLevelDebug {
 		// TODO -- convert to deck logging
 		deck.Infof("handling query %q\n", msg.String)
 	}
 	if strings.HasPrefix(strings.TrimSpace(msg.String), "[[") {
-		if rz.cfg.LogLevel >= LogLevelDebug {
+		if rz.cfg.LogLevel >= constants.LogLevelDebug {
 			deck.Infof("detected MetaDDL, rerouting...")
 			// TODO -- route meta-DDL here (for now just ACK and move on)
 			return writePgMsgs(rz.conn,
@@ -248,6 +249,7 @@ func (rz *RhizomeBackend) handleQuery(msg *pgproto3.Query) error {
 
 	// Run the query and check for errors
 	rows, err := rz.db.QueryContext(rz.ctx, msg.String)
+
 	if err != nil {
 		return writePgMsgs(rz.conn,
 			&pgproto3.ErrorResponse{Message: err.Error()},
@@ -266,7 +268,6 @@ func (rz *RhizomeBackend) handleQuery(msg *pgproto3.Query) error {
 		return err
 	}
 	buf := convertColTypesToPgRowDescriptions(cols).Encode(nil)
-
 	// Convert rows
 	pgrows, err := convertRowsToPgRows(rows, cols)
 	if err != nil {
@@ -304,7 +305,7 @@ and named statements/portals. If the client doesn't name a statement/portal, the
 Parse statements
 */
 func (rz *RhizomeBackend) handleParse(msg *pgproto3.Parse) error {
-	if rz.cfg.LogLevel >= LogLevelDebug {
+	if rz.cfg.LogLevel >= constants.LogLevelDebug {
 		deck.Infof("Parsing query %q\n", msg.Query)
 	}
 	pstmt, err := rz.db.DB.PrepareContext(rz.ctx, msg.Query)
@@ -374,7 +375,7 @@ func (rz *RhizomeBackend) handleBind(msg *pgproto3.Bind) error {
 }
 
 func (rz *RhizomeBackend) handleExecute(msg *pgproto3.Execute) error {
-	if rz.cfg.LogLevel >= LogLevelDebug {
+	if rz.cfg.LogLevel >= constants.LogLevelDebug {
 		deck.Infof("Attempting to execute portal %q\n", msg.Portal)
 	}
 	portalptr, ok := rz.portals[msg.Portal]
@@ -385,7 +386,7 @@ func (rz *RhizomeBackend) handleExecute(msg *pgproto3.Execute) error {
 			},
 		)
 	}
-	if rz.cfg.LogLevel >= LogLevelDebug {
+	if rz.cfg.LogLevel >= constants.LogLevelDebug {
 		deck.Infof("Attempting to execute stmt ID %q\n", portalptr.StmtID)
 	}
 	stmtptr, ok := rz.stmts[portalptr.StmtID]
@@ -396,7 +397,7 @@ func (rz *RhizomeBackend) handleExecute(msg *pgproto3.Execute) error {
 			},
 		)
 	}
-	if rz.cfg.LogLevel >= LogLevelDebug {
+	if rz.cfg.LogLevel >= constants.LogLevelDebug {
 		deck.Infof("Attempting to execute stmt literal %q\n", stmtptr.Stmt)
 	}
 

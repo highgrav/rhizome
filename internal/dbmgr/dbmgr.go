@@ -3,15 +3,11 @@ package dbmgr
 import (
 	"database/sql"
 	"github.com/google/deck"
+	"github.com/highgrav/rhizome/internal/constants"
 	"github.com/mattn/go-sqlite3"
 	"sync"
 	"sync/atomic"
 	"time"
-)
-
-const (
-	ProfileName = "rhizomestats"
-	StatOpenDbs = "open-dbs"
 )
 
 type DBManager struct {
@@ -39,7 +35,7 @@ func NewDBManager(cfg DBManagerConfig, defaultOpts DBConnOptions) *DBManager {
 		DefaultOpts: defaultOpts,
 		Stats:       make(map[string]*atomic.Int64),
 	}
-	dbm.Stats[StatOpenDbs] = &atomic.Int64{}
+	dbm.Stats[constants.StatOpenDbs] = &atomic.Int64{}
 
 	go func() {
 		for {
@@ -140,7 +136,7 @@ func (dbm *DBManager) Open(id string, opts DBConnOptions) error {
 	if _, ok := dbm.DBs[id]; ok {
 		return nil
 	}
-	if dbm.Stats[StatOpenDbs].Load() > int64(dbm.Cfg.MaxDBsOpen) {
+	if dbm.Stats[constants.StatOpenDbs].Load() > int64(dbm.Cfg.MaxDBsOpen) {
 		return ErrTooManyDBsOpen
 	}
 	dbm.Lock()
@@ -157,7 +153,7 @@ func (dbm *DBManager) OpenOrCreate(id string, opts DBConnOptions) error {
 	if _, ok := dbm.DBs[id]; ok {
 		return nil
 	}
-	if dbm.Stats[StatOpenDbs].Load() > int64(dbm.Cfg.MaxDBsOpen) {
+	if dbm.Stats[constants.StatOpenDbs].Load() > int64(dbm.Cfg.MaxDBsOpen) {
 		return ErrTooManyDBsOpen
 	}
 	dbm.Lock()

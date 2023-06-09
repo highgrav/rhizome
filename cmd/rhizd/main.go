@@ -5,14 +5,45 @@ import (
 	"database/sql"
 	"fmt"
 	"github.com/highgrav/rhizome"
+	"github.com/highgrav/rhizome/internal/constants"
 	"github.com/highgrav/rhizome/internal/dbmgr"
 	"github.com/highgrav/rhizome/internal/pgif"
+	"github.com/mattn/go-sqlite3"
 	"log"
 	"net"
 	"time"
 )
 
 func main() {
+	logFn := func(txt string) int {
+		fmt.Println(txt)
+		return len(txt)
+	}
+
+	authFn := func(actionCode int, arg1, arg2, arg3 string) int {
+		fmt.Printf("Action_code %d, %q %q %q\n", actionCode, arg1, arg2, arg3)
+		return sqlite3.SQLITE_OK
+	}
+
+	pgFnVersion := func() string {
+		return "sqlite3"
+	}
+
+	rhizome.Init(rhizome.RhizomeConfig{
+		Authorizer: authFn,
+		CustomFns: []rhizome.CustomFunction{
+			{
+				Name:   "log",
+				Fn:     logFn,
+				IsPure: true,
+			},
+			{
+				Name:   "version",
+				Fn:     pgFnVersion,
+				IsPure: true,
+			},
+		},
+	})
 
 	fnGet := func(id string) (string, error) {
 		return "/tmp/" + id + ".db", nil
@@ -47,6 +78,7 @@ func main() {
 		FnGetDB:        fnGet,
 		FnNewDB:        fnCreate,
 		LogDbOpenClose: true,
+		LogLevel:       constants.LogLevelDebug,
 	}
 	mgr := rhizome.NewDBManager(cfg, dbmgr.DBConnOptions{
 		UseJModeWAL:           true,
@@ -67,7 +99,7 @@ func main() {
 			panic(err)
 		}
 		b := rhizome.NewRhizomeBackend(context.Background(), conn, mgr, pgif.BackendConfig{
-			LogLevel:      pgif.LogLevelDebug,
+			LogLevel:      constants.LogLevelDebug,
 			ServerVersion: "9",
 		})
 		go func() {

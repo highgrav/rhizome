@@ -1,4 +1,4 @@
-# RHIZOME
+# Rhizome
 ## Postgres (wire)-compatible hard multitenancy database framework
 
 Rhizome is a proof of concept for implementing a PG wire-compatible server that enforces hard multitenant databases. 
@@ -17,9 +17,11 @@ not work. Also, there is no attempt to replicate Postgres' `pg_catalog` (as the 
 some tools may complain about being unable to query the system catalogs.
 
 ### Usage and Sample Implementation
-Integrating Rhizome is fairly straightforward: you first set up your Deck logging, create a new `DBManager` with 
-`rhizome.NewDBManager(...)` and then, for each Postgres connection, create a new backend handler with 
-`rhizome.NewRhizomeBackend(...)` and then call `.run()` on the handler.
+Integrating Rhizome is fairly straightforward: you first set up your Deck logging, then:
+- Run `rhizome.Init(...)` to set up Rhizome with any custom functions 
+- Create a new `DBManager` with `rhizome.NewDBManager(...)` 
+- For each Postgres connection, create a new backend handler with `rhizome.NewRhizomeBackend(...)` 
+- Call `.run()` on the handler.
 
 A sample implementation can be found in `cmd/rhizd`. You can test this by creating a new Sqlite db in `/tmp`, 
 running `go run cmd/rhizd` and then attempting to connect to it via `psql`. For example, if you created a `/tmp/test.db` 
@@ -37,7 +39,7 @@ database solutions, try:
 - dqlite: C library to run replicated Sqlite; more efficient than rqlite. https://dqlite.io/
 
 
-Rhizome doesn't pretend to be production-ready database and lacks the consistency guarantees of the above solutions. 
+Rhizome doesn't pretend to be a production-ready database and lacks the consistency guarantees of the above solutions. 
 
 In addition, ID sharding is not implemented at this layer, so you're likely to run out of file descriptors if you have a decent 
 number of databases open; this risk can be reduced by implementing sharding at your application level to determine where requests 

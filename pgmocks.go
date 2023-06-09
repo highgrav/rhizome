@@ -1,4 +1,4 @@
-package rhzdb
+package rhizome
 
 func pgFnVersion() string {
 	return "sqlite3"
