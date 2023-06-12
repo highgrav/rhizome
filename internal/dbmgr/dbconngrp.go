@@ -54,12 +54,16 @@ func (grp *DBConnGroup) Sweep(timeout time.Duration) {
 	}
 	grp.Lock()
 	defer grp.Unlock()
+	deleted := 0
 	for i := len(grp.Conns) - 1; i >= 0; i-- {
 		conn := grp.Conns[i]
 		if conn.PendingDelete {
 			grp.Conns = append(grp.Conns[:i], grp.Conns[i+1:]...)
+			deleted++
 		}
 	}
+	deck.Infof("%s: marked %d, swept %d, open %d", grp.ID, toDelete, deleted, len(grp.Conns))
+
 }
 
 func (grp *DBConnGroup) Close() {

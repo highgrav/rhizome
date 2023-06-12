@@ -138,10 +138,10 @@ func main() {
 	fnCreate := func(id string, opts dbmgr.DBConnOptions) error {
 		fname := dbDir + id + ".db"
 		connstr := "file:" + fname + opts.ConnstrOpts("rwc")
-		fmt.Println("creating test db " + fname + " with connstr " + connstr)
+		deck.Infof("creating test db %s with connstr %q", fname, connstr)
 		db, err := sql.Open("sqlite3", connstr)
 		if err != nil {
-			fmt.Println("error creating new file: " + err.Error())
+			deck.Fatalf("error creating new file: %s", err.Error())
 			return err
 		}
 
@@ -170,9 +170,9 @@ func main() {
 
 	cfg := dbmgr.DBManagerConfig{
 		BaseDir:         dbDir,
-		MaxDBsOpen:      500,
-		MaxIdleTime:     10 * time.Second,
-		SweepEach:       10 * time.Second,
+		MaxDBsOpen:      1000,
+		MaxIdleTime:     5 * time.Minute,
+		SweepEach:       30 * time.Second,
 		CheckpointEach:  5 * time.Minute,
 		FnGetDB:         fnGet,
 		FnNewDB:         fnCreate,
@@ -189,7 +189,7 @@ func main() {
 		ForeignKeys:           false,
 	})
 	ln, err := net.Listen("tcp", ":"+strconv.FormatInt(int64(port), 10))
-	fmt.Printf("listening on port %d...\n", port)
+	deck.Infof("listening on port %d...\n", port)
 
 	st := time.NewTicker(time.Second * 60)
 	go func() {
@@ -217,7 +217,7 @@ func main() {
 				if err != nil {
 					deck.Errorf("error processing queries from %s: %s", conn.RemoteAddr(), err.Error())
 				}
-				if *logLevelFlag >= constants.LogLevelDebug {
+				if *logLevelFlag > constants.LogLevelDebug {
 					deck.Infof("Closed connection from %s", conn.RemoteAddr())
 				}
 				closedConns++

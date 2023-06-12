@@ -237,7 +237,14 @@ func (rz *RhizomeBackend) Run() error {
 				return err
 			}
 		case *pgproto3.CancelRequest:
-			return errors.New("received unsupported cancel request")
+			if rz.cfg.LogLevel >= constants.LogLevelDebug {
+				deck.Infof("received unsupported cancel request")
+			}
+			writePgMsgs(rz.conn,
+				&pgproto3.ErrorResponse{
+					Message: "unsupported option",
+				},
+			)
 		case *pgproto3.Close:
 			if rz.cfg.LogLevel >= constants.LogLevelDebug {
 				deck.Infof("Detected FE Close msg: %+v\n", msg)
@@ -246,11 +253,32 @@ func (rz *RhizomeBackend) Run() error {
 				return err
 			}
 		case *pgproto3.CopyData:
-			return errors.New("received unsupported copy request")
+			if rz.cfg.LogLevel >= constants.LogLevelDebug {
+				deck.Infof("received unsupported copy request")
+			}
+			writePgMsgs(rz.conn,
+				&pgproto3.ErrorResponse{
+					Message: "unsupported option",
+				},
+			)
 		case *pgproto3.CopyDone:
-			return errors.New("received unsupported copy done request")
+			if rz.cfg.LogLevel >= constants.LogLevelDebug {
+				deck.Infof("received unsupported copy done request")
+			}
+			writePgMsgs(rz.conn,
+				&pgproto3.ErrorResponse{
+					Message: "unsupported option",
+				},
+			)
 		case *pgproto3.CopyFail:
-			return errors.New("received unsupported copy fail request")
+			if rz.cfg.LogLevel >= constants.LogLevelDebug {
+				deck.Infof("received unsupported copy fail request")
+			}
+			writePgMsgs(rz.conn,
+				&pgproto3.ErrorResponse{
+					Message: "unsupported option",
+				},
+			)
 		case *pgproto3.Describe:
 			if rz.cfg.LogLevel >= constants.LogLevelDebug {
 				deck.Infof("Detected FE Describe msg: %+v\n", msg)
@@ -273,22 +301,64 @@ func (rz *RhizomeBackend) Run() error {
 				return err
 			}
 		case *pgproto3.FunctionCall:
-			return errors.New("received unsupported function call request")
+			if rz.cfg.LogLevel >= constants.LogLevelDebug {
+				deck.Infof("received unsupported function call request")
+			}
+			writePgMsgs(rz.conn,
+				&pgproto3.ErrorResponse{
+					Message: "unsupported option",
+				},
+			)
 		case *pgproto3.GSSEncRequest:
-			return errors.New("received unsupported gssenc request")
+			if rz.cfg.LogLevel >= constants.LogLevelDebug {
+				deck.Infof("received unsupported gssenc request")
+			}
+			writePgMsgs(rz.conn,
+				&pgproto3.ErrorResponse{
+					Message: "unsupported option",
+				},
+			)
 		case *pgproto3.PasswordMessage:
-			return errors.New("received out of band password ")
+			if rz.cfg.LogLevel >= constants.LogLevelDebug {
+				deck.Infof("received out of band password request")
+			}
+			writePgMsgs(rz.conn,
+				&pgproto3.ErrorResponse{
+					Message: "unsupported option",
+				},
+			)
 		case *pgproto3.SASLInitialResponse:
-			return errors.New("received unsupported sasl initial response request")
+			if rz.cfg.LogLevel >= constants.LogLevelDebug {
+				deck.Infof("received unsupported sasl initial request")
+			}
+			writePgMsgs(rz.conn,
+				&pgproto3.ErrorResponse{
+					Message: "unsupported option",
+				},
+			)
 		case *pgproto3.SASLResponse:
-			return errors.New("received unsupported sasl response request")
+			if rz.cfg.LogLevel >= constants.LogLevelDebug {
+				deck.Infof("received unsupported sasl response request")
+			}
+			writePgMsgs(rz.conn,
+				&pgproto3.ErrorResponse{
+					Message: "unsupported option",
+				},
+			)
 		case *pgproto3.SSLRequest:
 			err := rz.upgradeToTLS()
 			if err != nil {
 				return err
 			}
 		case *pgproto3.StartupMessage:
-			return errors.New("received unsupported startup request (out of sequence)")
+			if rz.cfg.LogLevel >= constants.LogLevelDebug {
+				deck.Infof("received out of sequence startup request")
+			}
+			writePgMsgs(rz.conn,
+				&pgproto3.ErrorResponse{
+					Message: "unsupported option",
+				},
+			)
 		case *pgproto3.Sync:
 			if rz.cfg.LogLevel >= constants.LogLevelDebug {
 				deck.Infof("Detected FE Sync msg: %+v\n", msg)
@@ -314,14 +384,14 @@ func (rz *RhizomeBackend) Run() error {
 				return err
 			}
 		default:
-			return fmt.Errorf("received message other than Query from client: %#v", msg)
+			return fmt.Errorf("received unknown message from client: %#v", msg)
 		}
-
 	}
 	return nil
 }
 
 func (rz *RhizomeBackend) close() error {
+	_ = rz.cleanup()
 	return rz.conn.Close()
 }
 

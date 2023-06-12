@@ -180,13 +180,12 @@ func (dbc *DBConn) Ping() error {
 	if dbc.DB == nil {
 		return ErrDBNotOpen
 	}
-	dbc.LastAccessed = time.Now()
-	dbc.PendingDelete = false
 	return dbc.DB.Ping()
 }
 
 func (dbc *DBConn) Close() {
 	if dbc.DB == nil {
+		dbc.PendingDelete = true
 		return
 	}
 	dbc.Lock()
@@ -196,6 +195,7 @@ func (dbc *DBConn) Close() {
 	if err == nil && dbc.Mgr != nil {
 		dbc.Mgr.UpdateStat(constants.StatOpenDbs, -1)
 	} else {
+		dbc.PendingDelete = true
 		deck.Errorf("error closing db " + dbc.ID + " (this may not be a problem)")
 	}
 	dbc.PendingDelete = true
