@@ -187,9 +187,12 @@ func (dbc *DBConn) Close() {
 	}
 	dbc.Lock()
 	defer dbc.Unlock()
+
 	err := dbc.DB.Close()
 	if err == nil && dbc.Mgr != nil {
 		dbc.Mgr.UpdateStat(constants.StatOpenDbs, -1)
+	} else {
+		deck.Errorf("error closing db " + dbc.ID + " (this may not be a problem)")
 	}
 	dbc.DB = nil
 }
@@ -227,17 +230,12 @@ func (dbc *DBConn) Exec(query string, args ...any) (sql.Result, error) {
 	dbc.Lock()
 	defer dbc.Unlock()
 	dbc.LastAccessed = time.Now()
-	c, err := dbc.Conn(context.Background())
-	if err != nil {
-		return nil, err
-	}
 
-	r, err := c.ExecContext(context.Background(), query, args...)
+	r, err := dbc.DB.ExecContext(context.Background(), query, args...)
 	if err != nil {
-		_ = c.Close()
+		deck.Errorf("failed exec()ing query %q on db %q: %q", query, dbc.ID, err.Error())
 		return nil, err
 	}
-	err = c.Close()
 	return r, err
 }
 
@@ -252,6 +250,7 @@ func (dbc *DBConn) QueryContext(ctx context.Context, query string, args ...any) 
 	if dbc.DB == nil {
 		err := dbc.Reopen()
 		if err != nil {
+			deck.Errorf("failed reopening db %s: %q", dbc.ID, err.Error())
 			return nil, err
 		}
 	}
@@ -259,8 +258,12 @@ func (dbc *DBConn) QueryContext(ctx context.Context, query string, args ...any) 
 	defer dbc.RUnlock()
 	dbc.LastAccessed = time.Now()
 
-	return dbc.DB.QueryContext(ctx, query, args...)
-
+	r, err := dbc.DB.QueryContext(ctx, query, args...)
+	if err != nil {
+		deck.Errorf("failed query %q on db %s: %q", query, dbc.ID, err.Error())
+		return nil, err
+	}
+	return r, nil
 }
 
 func (dbc *DBConn) QueryRow(query string, args ...any) (*sql.Row, error) {
@@ -271,6 +274,7 @@ func (dbc *DBConn) QueryRowContext(ctx context.Context, query string, args ...an
 	if dbc.DB == nil {
 		err := dbc.Reopen()
 		if err != nil {
+			deck.Errorf("failed to reopen db %s: %q", dbc.ID, err.Error())
 			return nil, err
 		}
 	}

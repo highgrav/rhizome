@@ -1,9 +1,10 @@
-package dbmgr
+package tests
 
 import (
 	"database/sql"
 	"fmt"
-	"github.com/highgrav/rhizome/internal/rhz"
+	"github.com/highgrav/rhizome"
+	"github.com/highgrav/rhizome/internal/dbmgr"
 	"runtime"
 	"strconv"
 	"testing"
@@ -11,9 +12,9 @@ import (
 )
 
 func TestCreateDBMgr(t *testing.T) {
-	rhz.Init(rhz.RhizomeConfig{})
-	fnCreate := func(id string, opts DBConnOptions) error {
-		fname := "/tmp/" + id + ".db"
+	rhizome.Init(rhizome.RhizomeConfig{})
+	fnCreate := func(id string, opts dbmgr.DBConnOptions) error {
+		fname := "/tmp/dbs/" + id + ".db"
 		connstr := "file:" + fname + opts.ConnstrOpts("rwc")
 		fmt.Println("creating test db " + fname + " with connstr " + connstr)
 		db, err := sql.Open("sqlite3", connstr)
@@ -36,14 +37,14 @@ func TestCreateDBMgr(t *testing.T) {
 		return "/tmp/dbs/" + id + ".db", nil
 	}
 
-	dbm := NewDBManager(DBManagerConfig{
+	dbm := dbmgr.NewDBManager(dbmgr.DBManagerConfig{
 		BaseDir:     "",
 		MaxDBsOpen:  500,
 		MaxIdleTime: 10 * time.Minute,
 		SweepEach:   60 * time.Second,
 		FnGetDB:     fnGet,
 		FnNewDB:     fnCreate,
-	}, DBConnOptions{
+	}, dbmgr.DBConnOptions{
 		UseJModeWAL:           true,
 		CacheShared:           false,
 		SecureDeleteFast:      true,
@@ -54,7 +55,7 @@ func TestCreateDBMgr(t *testing.T) {
 
 	for i := 0; i < dbm.Cfg.MaxDBsOpen; i++ {
 		id := strconv.FormatInt(int64(i), 10)
-		err := dbm.OpenOrCreate(id, DBConnOptions{})
+		err := dbm.OpenOrCreate(id, dbmgr.DBConnOptions{})
 		if err != nil {
 			t.Error(err.Error())
 			return

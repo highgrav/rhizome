@@ -1,9 +1,10 @@
-package dbmgr
+package tests
 
 import (
 	"database/sql"
 	"fmt"
-	"github.com/highgrav/rhizome/internal/rhz"
+	"github.com/highgrav/rhizome"
+	"github.com/highgrav/rhizome/internal/dbmgr"
 	"github.com/mattn/go-sqlite3"
 	"os"
 	"testing"
@@ -11,8 +12,8 @@ import (
 )
 
 func TestNewDB(t *testing.T) {
-	rhz.Init(rhz.RhizomeConfig{})
-	fnCreate := func(id string, opts DBConnOptions) error {
+	rhizome.Init(rhizome.RhizomeConfig{})
+	fnCreate := func(id string, opts dbmgr.DBConnOptions) error {
 		fname := "/tmp/" + id + ".db"
 		connstr := "file:" + fname + opts.ConnstrOpts("rwc")
 		fmt.Println("creating test db " + fname + " with connstr " + connstr)
@@ -36,14 +37,14 @@ func TestNewDB(t *testing.T) {
 		return "/tmp/" + id + ".db", nil
 	}
 
-	dbm := NewDBManager(DBManagerConfig{
+	dbm := dbmgr.NewDBManager(dbmgr.DBManagerConfig{
 		BaseDir:     "",
 		MaxDBsOpen:  500,
 		MaxIdleTime: 10 * time.Minute,
 		SweepEach:   60 * time.Second,
 		FnGetDB:     fnGet,
 		FnNewDB:     fnCreate,
-	}, DBConnOptions{
+	}, dbmgr.DBConnOptions{
 		UseJModeWAL:           true,
 		CacheShared:           false,
 		SecureDeleteFast:      true,
@@ -57,7 +58,7 @@ func TestNewDB(t *testing.T) {
 	os.Remove(fname)
 
 	driver := &sqlite3.SQLiteDriver{}
-	conn, err := OpenOrCreateDBConn(dbm, driver, fid, fnGet, fnCreate, DBConnOptions{})
+	conn, err := dbmgr.OpenOrCreateDBConn(dbm, driver, fid, fnGet, fnCreate, dbmgr.DBConnOptions{})
 	if err != nil {
 		fmt.Println("Error opening/creating db: " + err.Error())
 		t.Error(err.Error())

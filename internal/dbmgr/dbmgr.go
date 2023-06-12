@@ -143,6 +143,7 @@ func (dbm *DBManager) Open(id string, opts DBConnOptions) error {
 	defer dbm.Unlock()
 	db, err := OpenDBConn(dbm, dbm.Driver, id, dbm.GetFilename, opts)
 	if err != nil {
+		deck.Errorf("failed to open database %s: %s", id, err.Error())
 		return err
 	}
 	dbm.DBs[id] = db
@@ -160,6 +161,7 @@ func (dbm *DBManager) OpenOrCreate(id string, opts DBConnOptions) error {
 	defer dbm.Unlock()
 	db, err := OpenOrCreateDBConn(dbm, dbm.Driver, id, dbm.GetFilename, dbm.CreateDb, opts)
 	if err != nil {
+		deck.Errorf("failed to open or create database %s: %s", id, err.Error())
 		return err
 	}
 	dbm.DBs[id] = db

@@ -5,12 +5,13 @@ import (
 	"database/sql"
 	"flag"
 	"fmt"
+	"github.com/google/deck"
 	"github.com/highgrav/rhizome"
+	"github.com/highgrav/rhizome/internal/constants"
 	"github.com/highgrav/rhizome/internal/dbmgr"
 	"github.com/highgrav/rhizome/internal/pgif"
 	"github.com/mattn/go-sqlite3"
 	"github.com/tg123/go-htpasswd"
-	"log"
 	"net"
 	"os"
 	"path"
@@ -19,6 +20,8 @@ import (
 )
 
 func main() {
+	var openedConns, closedConns, erroredConns int
+
 	var htaccess *htpasswd.File = nil
 	var htgroups *htpasswd.HTGroup = nil
 
@@ -102,7 +105,9 @@ func main() {
 	}
 
 	authFn := func(actionCode int, arg1, arg2, arg3 string) int {
-		fmt.Printf("Action_code %d, %q %q %q\n", actionCode, arg1, arg2, arg3)
+		if *logLevelFlag > constants.LogLevelDebug {
+			fmt.Printf("Action_code %d, %q %q %q\n", actionCode, arg1, arg2, arg3)
+		}
 		return sqlite3.SQLITE_OK
 	}
 
@@ -185,21 +190,38 @@ func main() {
 	})
 	ln, err := net.Listen("tcp", ":"+strconv.FormatInt(int64(port), 10))
 	fmt.Printf("listening on port %d...\n", port)
+
+	st := time.NewTicker(time.Second * 60)
+	go func() {
+		for {
+			select {
+			case _ = <-st.C:
+				deck.Infof("conns: %d opened, %d closed, %d errs, %d active\n", openedConns, closedConns, erroredConns, (openedConns - closedConns))
+			}
+		}
+	}()
+
 	if err != nil {
 		panic(err)
 	}
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			panic(err)
+			erroredConns++
+			deck.Errorf("error accepting connection: %s", err)
+		} else {
+			openedConns++
+			b := rhizome.NewRhizomeBackend(context.Background(), conn, mgr, rhzCfg)
+			go func() {
+				err := b.Run()
+				if err != nil {
+					deck.Errorf("error processing queries from %s: %s", conn.RemoteAddr(), err.Error())
+				}
+				if *logLevelFlag >= constants.LogLevelDebug {
+					deck.Infof("Closed connection from %s", conn.RemoteAddr())
+				}
+				closedConns++
+			}()
 		}
-		b := rhizome.NewRhizomeBackend(context.Background(), conn, mgr, rhzCfg)
-		go func() {
-			err := b.Run()
-			if err != nil {
-				log.Println(err.Error())
-			}
-			log.Println("Closed connection from", conn.RemoteAddr())
-		}()
 	}
 }

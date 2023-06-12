@@ -19,6 +19,7 @@ import (
 type RhizomeBackend struct {
 	ctx     context.Context
 	backend *pgproto3.Backend
+	sqlconn *sql.Conn
 	conn    net.Conn
 	dbmgr   *dbmgr.DBManager
 	db      *dbmgr.DBConn
@@ -45,7 +46,6 @@ type RhizomePortal struct {
 
 func NewRhizomeBackend(ctx context.Context, conn net.Conn, db *dbmgr.DBManager, cfg BackendConfig) *RhizomeBackend {
 	backend := pgproto3.NewBackend(pgproto3.NewChunkReader(conn), conn)
-
 	handler := &RhizomeBackend{
 		ctx:     ctx,
 		backend: backend,
@@ -62,6 +62,7 @@ func (rz *RhizomeBackend) upgradeToTLS() error {
 	if rz.cfg.UseTLS == false || rz.cfg.TLSKeyName == "" || rz.cfg.TLSCertName == "" {
 		_, err := rz.conn.Write([]byte("N"))
 		if err != nil {
+			deck.Errorf("error upgrading tls: %s", err.Error())
 			return err
 		}
 		return nil
@@ -89,10 +90,12 @@ func (rz *RhizomeBackend) upgradeToTLS() error {
 	// let the client know we're ready to upgrade
 	_, err := rz.conn.Write([]byte("S"))
 	if err != nil {
+		deck.Errorf("failed to write pg tls acknowledgement: %s", err.Error())
 		return err
 	}
 	err = sslConn.Handshake()
 	if err != nil {
+		deck.Errorf("failed to tls handshake: %s", err.Error())
 		return err
 	}
 	rz.conn = net.Conn(sslConn)
@@ -120,7 +123,7 @@ func (rz *RhizomeBackend) processStart() error {
 		}
 		return nil
 	case *pgproto3.StartupMessage:
-		var sqlconn *dbmgr.DBConn
+		var dbconn *dbmgr.DBConn
 		var err error = nil
 		if rz.cfg.LogLevel >= constants.LogLevelDebug {
 			deck.Infof("Detected FE Startup msg: %+v\n", startMsg)
@@ -133,17 +136,27 @@ func (rz *RhizomeBackend) processStart() error {
 		if !ok {
 			return errors.New("missing username")
 		}
-		sqlconn, err = rz.dbmgr.Get(dbname)
+		dbconn, err = rz.dbmgr.Get(dbname)
 		if err != nil {
 			writePgMsgs(rz.conn,
 				&pgproto3.ErrorResponse{
-					Message: "unknown database " + dbname,
+					Message: "error opening or unknown database " + dbname + ": " + err.Error(),
 				},
 			)
 			return err
 		}
-		sqlconn.User = username
-		rz.db = sqlconn
+		dbconn.User = username
+		sqlconn, err := dbconn.Conn(rz.ctx)
+		if err != nil {
+			writePgMsgs(rz.conn,
+				&pgproto3.ErrorResponse{
+					Message: "error connecting to database " + dbname + ": " + err.Error(),
+				},
+			)
+			return err
+		}
+		rz.db = dbconn
+		rz.sqlconn = sqlconn
 		buf := []byte{}
 		buf = (&pgproto3.AuthenticationCleartextPassword{}).Encode(buf)
 		_, err = rz.conn.Write(buf)
@@ -206,7 +219,9 @@ func (rz *RhizomeBackend) processPwd() error {
 }
 
 func (rz *RhizomeBackend) Run() error {
-	defer rz.close()
+	defer func() {
+		rz.close()
+	}()
 	err := rz.processStart()
 	if err != nil {
 		var buf []byte
@@ -317,6 +332,9 @@ func (rz *RhizomeBackend) Run() error {
 }
 
 func (rz *RhizomeBackend) close() error {
+	if rz.sqlconn != nil {
+		_ = rz.sqlconn.Close()
+	}
 	return rz.conn.Close()
 }
 
@@ -343,8 +361,12 @@ func (rz *RhizomeBackend) handleQuery(msg *pgproto3.Query) error {
 		return ErrDBNotOpen
 	}
 
+	if rz.sqlconn == nil {
+		return ErrDBNotOpen
+	}
+
 	// Run the query and check for errors
-	rows, err := rz.db.QueryContext(rz.ctx, msg.String)
+	rows, err := rz.sqlconn.QueryContext(rz.ctx, msg.String)
 
 	if err != nil {
 		return writePgMsgs(rz.conn,
@@ -404,7 +426,7 @@ func (rz *RhizomeBackend) handleParse(msg *pgproto3.Parse) error {
 	if rz.cfg.LogLevel >= constants.LogLevelDebug {
 		deck.Infof("Parsing query %q\n", msg.Query)
 	}
-	pstmt, err := rz.db.DB.PrepareContext(rz.ctx, msg.Query)
+	pstmt, err := rz.sqlconn.PrepareContext(rz.ctx, msg.Query)
 	if err != nil {
 		return writePgMsgs(rz.conn,
 			&pgproto3.ErrorResponse{
@@ -517,6 +539,7 @@ func (rz *RhizomeBackend) handleExecute(msg *pgproto3.Execute) error {
 	buf := make([]byte, 0)
 	pgrows, err := convertRowsToPgRows(rows, cols)
 	if err != nil {
+		deck.Errorf("failed to convert rows for executed query: %s", err.Error())
 		return err
 	}
 	for _, pgrow := range pgrows {
@@ -590,6 +613,26 @@ func (rz *RhizomeBackend) handleFlush(msg *pgproto3.Flush) error {
 			TxStatus: 'I',
 		},
 	)
+}
+
+/*
+See https://www.postgresql.org/docs/current/errcodes-appendix.html for codes
+*/
+func (rz *RhizomeBackend) CloseConnection(code, msg string) error {
+	return writePgMsgs(rz.conn,
+		&pgproto3.ErrorResponse{
+			Severity: "FATAL",
+			Message:  msg,
+			Code:     code,
+		},
+	)
+}
+
+func (rz *RhizomeBackend) cleanup() error {
+	if rz.sqlconn != nil {
+		return rz.sqlconn.Close()
+	}
+	return nil
 }
 
 func writePgMsgs(w io.Writer, msgs ...pgproto3.Message) error {
