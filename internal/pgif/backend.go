@@ -19,7 +19,6 @@ import (
 type RhizomeBackend struct {
 	ctx     context.Context
 	backend *pgproto3.Backend
-	sqlconn *sql.Conn
 	conn    net.Conn
 	dbmgr   *dbmgr.DBManager
 	db      *dbmgr.DBConn
@@ -146,17 +145,8 @@ func (rz *RhizomeBackend) processStart() error {
 			return err
 		}
 		dbconn.User = username
-		sqlconn, err := dbconn.Conn(rz.ctx)
-		if err != nil {
-			writePgMsgs(rz.conn,
-				&pgproto3.ErrorResponse{
-					Message: "error connecting to database " + dbname + ": " + err.Error(),
-				},
-			)
-			return err
-		}
+
 		rz.db = dbconn
-		rz.sqlconn = sqlconn
 		buf := []byte{}
 		buf = (&pgproto3.AuthenticationCleartextPassword{}).Encode(buf)
 		_, err = rz.conn.Write(buf)
@@ -332,9 +322,6 @@ func (rz *RhizomeBackend) Run() error {
 }
 
 func (rz *RhizomeBackend) close() error {
-	if rz.sqlconn != nil {
-		_ = rz.sqlconn.Close()
-	}
 	return rz.conn.Close()
 }
 
@@ -361,12 +348,8 @@ func (rz *RhizomeBackend) handleQuery(msg *pgproto3.Query) error {
 		return ErrDBNotOpen
 	}
 
-	if rz.sqlconn == nil {
-		return ErrDBNotOpen
-	}
-
 	// Run the query and check for errors
-	rows, err := rz.sqlconn.QueryContext(rz.ctx, msg.String)
+	rows, err := rz.db.QueryContext(rz.ctx, msg.String)
 
 	if err != nil {
 		return writePgMsgs(rz.conn,
@@ -426,7 +409,7 @@ func (rz *RhizomeBackend) handleParse(msg *pgproto3.Parse) error {
 	if rz.cfg.LogLevel >= constants.LogLevelDebug {
 		deck.Infof("Parsing query %q\n", msg.Query)
 	}
-	pstmt, err := rz.sqlconn.PrepareContext(rz.ctx, msg.Query)
+	pstmt, err := rz.db.DB.PrepareContext(rz.ctx, msg.Query)
 	if err != nil {
 		return writePgMsgs(rz.conn,
 			&pgproto3.ErrorResponse{
@@ -629,8 +612,8 @@ func (rz *RhizomeBackend) CloseConnection(code, msg string) error {
 }
 
 func (rz *RhizomeBackend) cleanup() error {
-	if rz.sqlconn != nil {
-		return rz.sqlconn.Close()
+	if rz.db != nil {
+		rz.db.Close()
 	}
 	return nil
 }

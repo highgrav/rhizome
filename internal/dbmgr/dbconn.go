@@ -13,17 +13,19 @@ import (
 
 type DBConn struct {
 	sync.RWMutex
-	LastAccessed time.Time
-	ID           string
-	DB           *sql.DB
-	Mgr          *DBManager
-	driver       *sqlite3.SQLiteDriver
-	opts         DBConnOptions
-	fnGet        FnGetFilenameFromID
-	User         string
+	LastAccessed  time.Time
+	ID            string
+	DB            *sql.DB
+	Mgr           *DBManager
+	Grp           *DBConnGroup
+	driver        *sqlite3.SQLiteDriver
+	opts          DBConnOptions
+	fnGet         FnGetFilenameFromID
+	User          string
+	PendingDelete bool
 }
 
-func OpenOrCreateDBConn(mgr *DBManager, driver *sqlite3.SQLiteDriver, id string, fnGet FnGetFilenameFromID, fnCreate FnCreateNewDB, opts DBConnOptions) (*DBConn, error) {
+func OpenOrCreateDBConn(mgr *DBManager, grp *DBConnGroup, driver *sqlite3.SQLiteDriver, id string, fnGet FnGetFilenameFromID, fnCreate FnCreateNewDB, opts DBConnOptions) (*DBConn, error) {
 
 	filepath, err := fnGet(id)
 	if err != nil {
@@ -54,19 +56,21 @@ func OpenOrCreateDBConn(mgr *DBManager, driver *sqlite3.SQLiteDriver, id string,
 	}
 
 	dbc := &DBConn{
-		Mgr:          mgr,
-		LastAccessed: time.Now(),
-		ID:           id,
-		DB:           db,
-		driver:       driver,
-		opts:         opts,
-		fnGet:        fnGet,
+		Mgr:           mgr,
+		Grp:           grp,
+		LastAccessed:  time.Now(),
+		PendingDelete: false,
+		ID:            id,
+		DB:            db,
+		driver:        driver,
+		opts:          opts,
+		fnGet:         fnGet,
 	}
 
 	return dbc, nil
 }
 
-func OpenDBConn(mgr *DBManager, driver *sqlite3.SQLiteDriver, id string, fnGet FnGetFilenameFromID, opts DBConnOptions) (*DBConn, error) {
+func OpenDBConn(mgr *DBManager, grp *DBConnGroup, driver *sqlite3.SQLiteDriver, id string, fnGet FnGetFilenameFromID, opts DBConnOptions) (*DBConn, error) {
 	filepath, err := fnGet(id)
 	if err != nil {
 		return nil, err
@@ -95,13 +99,15 @@ func OpenDBConn(mgr *DBManager, driver *sqlite3.SQLiteDriver, id string, fnGet F
 	}
 
 	dbc := &DBConn{
-		Mgr:          mgr,
-		LastAccessed: time.Now(),
-		ID:           id,
-		DB:           db,
-		driver:       driver,
-		opts:         opts,
-		fnGet:        fnGet,
+		Mgr:           mgr,
+		Grp:           grp,
+		LastAccessed:  time.Now(),
+		PendingDelete: false,
+		ID:            id,
+		DB:            db,
+		driver:        driver,
+		opts:          opts,
+		fnGet:         fnGet,
 	}
 	return dbc, nil
 }
@@ -118,6 +124,7 @@ func (dbc *DBConn) Authorize(username, pwd, db string) bool {
 	return v
 }
 
+// TODO -- no longer needed once we're separating connections
 func (dbc *DBConn) Reopen() error {
 	dbc.Lock()
 	defer dbc.Unlock()
@@ -148,16 +155,12 @@ func (dbc *DBConn) Reopen() error {
 		dbc.Mgr.UpdateStat(constants.StatOpenDbs, 1)
 	}
 	dbc.LastAccessed = time.Now()
+	dbc.PendingDelete = false
 
 	if dbc.Mgr != nil {
-		db2 := dbc.Mgr.AddConn(dbc.ID, dbc)
-		if db2 != nil {
-			// race condition -- there's a valid connection already open, so close ours and use the existing one
-			// (this should prevent hanging connections)
-			_ = db.Close()
-			dbc.Mgr.UpdateStat(constants.StatOpenDbs, -1)
-			dbc.DB = db2
-			return nil
+		err := dbc.Mgr.AddConn(dbc.ID, dbc)
+		if err != nil {
+			return err
 		}
 	}
 	if err != nil {
@@ -178,6 +181,7 @@ func (dbc *DBConn) Ping() error {
 		return ErrDBNotOpen
 	}
 	dbc.LastAccessed = time.Now()
+	dbc.PendingDelete = false
 	return dbc.DB.Ping()
 }
 
@@ -194,6 +198,7 @@ func (dbc *DBConn) Close() {
 	} else {
 		deck.Errorf("error closing db " + dbc.ID + " (this may not be a problem)")
 	}
+	dbc.PendingDelete = true
 	dbc.DB = nil
 }
 
@@ -230,6 +235,7 @@ func (dbc *DBConn) Exec(query string, args ...any) (sql.Result, error) {
 	dbc.Lock()
 	defer dbc.Unlock()
 	dbc.LastAccessed = time.Now()
+	dbc.PendingDelete = false
 
 	r, err := dbc.DB.ExecContext(context.Background(), query, args...)
 	if err != nil {
@@ -257,6 +263,7 @@ func (dbc *DBConn) QueryContext(ctx context.Context, query string, args ...any) 
 	dbc.RLock()
 	defer dbc.RUnlock()
 	dbc.LastAccessed = time.Now()
+	dbc.PendingDelete = false
 
 	r, err := dbc.DB.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -281,6 +288,7 @@ func (dbc *DBConn) QueryRowContext(ctx context.Context, query string, args ...an
 	dbc.RLock()
 	defer dbc.RUnlock()
 	dbc.LastAccessed = time.Now()
+	dbc.PendingDelete = false
 
 	row := dbc.DB.QueryRowContext(ctx, query, args...)
 	return row, nil

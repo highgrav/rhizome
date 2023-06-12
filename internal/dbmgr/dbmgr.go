@@ -1,7 +1,6 @@
 package dbmgr
 
 import (
-	"database/sql"
 	"github.com/google/deck"
 	"github.com/highgrav/rhizome/internal/constants"
 	"github.com/mattn/go-sqlite3"
@@ -14,7 +13,7 @@ type DBManager struct {
 	sync.Mutex
 	Cfg         DBManagerConfig
 	Driver      *sqlite3.SQLiteDriver
-	DBs         map[string]*DBConn
+	DBs         map[string]*DBConnGroup
 	ticker      *time.Ticker
 	done        chan bool
 	GetFilename FnGetFilenameFromID
@@ -27,7 +26,7 @@ func NewDBManager(cfg DBManagerConfig, defaultOpts DBConnOptions) *DBManager {
 	dbm := &DBManager{
 		Cfg:         cfg,
 		Driver:      &sqlite3.SQLiteDriver{},
-		DBs:         make(map[string]*DBConn),
+		DBs:         make(map[string]*DBConnGroup),
 		ticker:      time.NewTicker(cfg.SweepEach),
 		done:        make(chan bool),
 		GetFilename: cfg.FnGetDB,
@@ -59,98 +58,100 @@ func (dbm *DBManager) UpdateStat(name string, val int64) {
 	dbm.Stats[name].Add(val)
 }
 
-/*
-AddConn() is used by open DBConns to deal with databases that have been unloaded, by allowing them to repopulate the DB
-map. This also handles a race condition where two attempts to populate a DB overlap, by returning a sql.DB if a valid one
-already exists. The DBConn is responsible for closing its own connection if this happens and instead using the one returned
-from this function.
-*/
-func (dbm *DBManager) AddConn(id string, conn *DBConn) *sql.DB {
+func (dbm *DBManager) AddConn(id string, conn *DBConn) error {
 	dbm.Lock()
 	defer dbm.Unlock()
-	c, ok := dbm.DBs[id]
-	if !ok {
-		dbm.DBs[id] = conn
+	cgrp, ok := dbm.DBs[id]
+	var err error
+	if !ok || cgrp == nil {
+		cgrp, err = NewDBConnGroup(id)
+		if err != nil {
+			return err
+		}
+		dbm.DBs[id] = cgrp
+		err := dbm.DBs[id].AddConn(conn)
+		if err != nil {
+			return err
+		}
 		return nil
 	}
-	if c.DB != nil {
-		if c.DB.Ping() == nil {
-			// we have an active connection, so return it instead
-			return c.DB
-		}
+	err = cgrp.AddConn(conn)
+	if err != nil {
+		return err
 	}
-	dbm.DBs[id] = conn
 	return nil
 }
 
 func (dbm *DBManager) sweep() {
-	var dbs []string = make([]string, 0)
-	for k, v := range dbm.DBs {
-		if v.LastAccessed.Before(time.Now().Add(-1 * dbm.Cfg.MaxIdleTime)) {
-			dbs = append(dbs, k)
-		}
-	}
-	if len(dbs) == 0 {
-		return
-	}
-	dbm.Lock()
-	defer dbm.Unlock()
-	for _, v := range dbs {
-		dbm.CloseDB(v)
+	for _, varr := range dbm.DBs {
+		varr.Sweep(dbm.Cfg.MaxIdleTime)
 	}
 }
 
 func (dbm *DBManager) Get(id string) (*DBConn, error) {
-	conn, ok := dbm.DBs[id]
+	conngrp, ok := dbm.DBs[id]
 	if ok {
+		conn, err := conngrp.NewConn(dbm, dbm.DefaultOpts)
+		if err != nil {
+			return nil, err
+		}
 		return conn, nil
 	}
-	err := dbm.Open(id, dbm.DefaultOpts)
+	err := dbm.Open(id)
 	if err != nil {
 		return nil, err
 	}
-	conn, ok = dbm.DBs[id]
+	conngrp, ok = dbm.DBs[id]
 	if ok {
+		conn, err := conngrp.NewConn(dbm, dbm.DefaultOpts)
+		if err != nil {
+			return nil, err
+		}
 		return conn, nil
 	}
 	return nil, ErrCouldNotOpenFile
 }
 
 func (dbm *DBManager) GetOrCreate(id string) (*DBConn, error) {
-	conn, ok := dbm.DBs[id]
+	conngrp, ok := dbm.DBs[id]
 	if ok {
+		conn, err := conngrp.NewConn(dbm, dbm.DefaultOpts)
+		if err != nil {
+			return nil, err
+		}
 		return conn, nil
 	}
-	err := dbm.OpenOrCreate(id, dbm.DefaultOpts)
+	err := dbm.OpenOrCreate(id)
 	if err != nil {
 		return nil, err
 	}
-	conn, ok = dbm.DBs[id]
+	conngrp, ok = dbm.DBs[id]
 	if ok {
+		conn, err := conngrp.NewConn(dbm, dbm.DefaultOpts)
+		if err != nil {
+			return nil, err
+		}
 		return conn, nil
 	}
 	return nil, ErrCouldNotOpenFile
 }
 
-func (dbm *DBManager) Open(id string, opts DBConnOptions) error {
+func (dbm *DBManager) Open(id string) error {
 	if _, ok := dbm.DBs[id]; ok {
 		return nil
 	}
 	if dbm.Stats[constants.StatOpenDbs].Load() > int64(dbm.Cfg.MaxDBsOpen) {
 		return ErrTooManyDBsOpen
 	}
-	dbm.Lock()
-	defer dbm.Unlock()
-	db, err := OpenDBConn(dbm, dbm.Driver, id, dbm.GetFilename, opts)
+	conngrp, err := NewDBConnGroup(id)
 	if err != nil {
-		deck.Errorf("failed to open database %s: %s", id, err.Error())
 		return err
 	}
-	dbm.DBs[id] = db
+	dbm.DBs[id] = conngrp
 	return nil
 }
 
-func (dbm *DBManager) OpenOrCreate(id string, opts DBConnOptions) error {
+func (dbm *DBManager) OpenOrCreate(id string) error {
 	if _, ok := dbm.DBs[id]; ok {
 		return nil
 	}
@@ -159,7 +160,7 @@ func (dbm *DBManager) OpenOrCreate(id string, opts DBConnOptions) error {
 	}
 	dbm.Lock()
 	defer dbm.Unlock()
-	db, err := OpenOrCreateDBConn(dbm, dbm.Driver, id, dbm.GetFilename, dbm.CreateDb, opts)
+	db, err := NewDBConnGroup(id)
 	if err != nil {
 		deck.Errorf("failed to open or create database %s: %s", id, err.Error())
 		return err
@@ -181,11 +182,11 @@ func (dbm *DBManager) CloseDB(id string) {
 	if dbm.Cfg.LogDbOpenClose {
 		deck.Infof("Closing db %s", id)
 	}
-	conn, ok := dbm.DBs[id]
-	if !ok || conn == nil {
+	grp, ok := dbm.DBs[id]
+	if !ok || grp == nil {
 		return
 	}
-	conn.Close()
+	grp.Close()
 	delete(dbm.DBs, id)
 	return
 }
