@@ -89,7 +89,9 @@ func (dbm *DBManager) sweep() {
 }
 
 func (dbm *DBManager) Get(id string) (*DBConn, error) {
+	dbm.Lock()
 	conngrp, ok := dbm.DBs[id]
+	dbm.Unlock()
 	if ok {
 		conn, err := conngrp.NewConn(dbm, dbm.DefaultOpts)
 		if err != nil {
@@ -113,7 +115,9 @@ func (dbm *DBManager) Get(id string) (*DBConn, error) {
 }
 
 func (dbm *DBManager) GetOrCreate(id string) (*DBConn, error) {
+	dbm.Lock()
 	conngrp, ok := dbm.DBs[id]
+	dbm.Unlock()
 	if ok {
 		conn, err := conngrp.NewConn(dbm, dbm.DefaultOpts)
 		if err != nil {
@@ -137,6 +141,8 @@ func (dbm *DBManager) GetOrCreate(id string) (*DBConn, error) {
 }
 
 func (dbm *DBManager) Open(id string) error {
+	dbm.Lock()
+	defer dbm.Unlock()
 	if _, ok := dbm.DBs[id]; ok {
 		return nil
 	}
@@ -152,6 +158,8 @@ func (dbm *DBManager) Open(id string) error {
 }
 
 func (dbm *DBManager) OpenOrCreate(id string) error {
+	dbm.Lock()
+	defer dbm.Unlock()
 	if _, ok := dbm.DBs[id]; ok {
 		return nil
 	}
